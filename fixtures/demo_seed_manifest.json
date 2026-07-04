@@ -1,0 +1,40 @@
+{
+  "version": "demo-seed-v1",
+  "client": {
+    "email": "demo-client@genko.local",
+    "full_name": "[DEMO] Test Client",
+    "account_type": "client",
+    "phone_number": "+10000000001"
+  },
+  "merchant_owner": {
+    "email": "demo-merchant@genko.local",
+    "full_name": "[DEMO] Demo Merchant Owner",
+    "account_type": "business"
+  },
+  "business": {
+    "name": "[DEMO] Demo Store",
+    "root_url": "http://127.0.0.1:8100",
+    "category": "apparel",
+    "domain": "127.0.0.1"
+  },
+  "wallet": {
+    "available_minor": 1500,
+    "currency": "USD",
+    "reserved_minor": 0
+  },
+  "scopes": {
+    "mcp": [
+      "catalog:read",
+      "checkout:write",
+      "purchase:execute",
+      "order:read",
+      "wallet:read"
+    ],
+    "sdk": [
+      "payment:verify",
+      "payment:accredit",
+      "payment:release"
+    ]
+  },
+  "api_key_label": "demo-seed-v1"
+}
