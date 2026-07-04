@@ -34,7 +34,11 @@ class SupabaseClient:
         return self._parse_response(response)
 
     async def insert(self, table: str, payload: dict) -> Any:
-        response = await self._client.post(f"/{table}", json=payload)
+        response = await self._client.post(
+            f"/{table}",
+            json=payload,
+            headers={"Prefer": "return=representation"},
+        )
         return self._parse_response(response)
 
     async def update(self, table: str, payload: dict, *, query: dict[str, str]) -> Any:
