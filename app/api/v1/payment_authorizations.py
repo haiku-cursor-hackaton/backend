@@ -54,7 +54,6 @@ async def accredit_payment_authorization(
     service: Annotated[PaymentAuthorizationService, Depends(_get_service)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict:
-    _ = idempotency_key
     business_id = _require_business_id(context)
     try:
         return await service.accredit(
@@ -63,6 +62,7 @@ async def accredit_payment_authorization(
             order_id=body.order_id,
             amount_minor=body.amount_minor,
             currency=body.currency,
+            idempotency_key=idempotency_key,
         )
     except PaymentAuthorizationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

@@ -141,11 +141,24 @@ class CompleteCheckoutOrchestrator:
         if available < total_minor:
             return build_insufficient_balance_error(total_minor, currency)
 
-        idem_hash = _idempotency_hash(profile_id, str(checkout_row["id"]), external_checkout_id)
+        checkout_row_id = checkout_row.get("id")
+        if not checkout_row_id:
+            return {
+                "ucp": {"status": "error"},
+                "messages": [
+                    {
+                        "code": "checkout_not_persisted",
+                        "severity": "recoverable",
+                        "content": "Checkout session could not be persisted locally.",
+                    }
+                ],
+            }
+
+        idem_hash = _idempotency_hash(profile_id, str(checkout_row_id), external_checkout_id)
         reserve_result = await self._supabase.rpc(
             "reserve_checkout_payment",
             {
-                "p_checkout_session_id": checkout_row["id"],
+                "p_checkout_session_id": checkout_row_id,
                 "p_idempotency_key_hash": idem_hash,
             },
         )

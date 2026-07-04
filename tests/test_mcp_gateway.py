@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth.api_keys import ApiKeyContext
-from app.auth.scopes import CATALOG_READ
+from app.auth.scopes import CATALOG_READ, CHECKOUT_WRITE, PURCHASE_EXECUTE
 from app.config import Settings, get_settings
 from app.dependencies import get_current_mcp_context, get_supabase_client
 from app.main import app
@@ -161,3 +161,33 @@ def test_mcp_search_catalog_dual_output(mcp_client: TestClient) -> None:
     assert events[-1]["operation"] == "search_catalog"
     assert events[-1]["transport"] == "mcp"
     assert events[-1]["status"] == "success"
+
+
+def test_mcp_unknown_tool_returns_32601(mcp_client: TestClient) -> None:
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc("tools/call", {"name": "not_a_tool", "arguments": {}}),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    error = response.json()["error"]
+    assert error["code"] == -32601
+    assert "Unknown tool" in error["message"]
+
+
+def test_mcp_missing_checkout_id_returns_32602_not_unknown_tool(mcp_client: TestClient) -> None:
+    app.dependency_overrides[get_current_mcp_context] = lambda: ApiKeyContext(
+        api_key_id="key-1",
+        profile_id="profile-1",
+        scopes=[PURCHASE_EXECUTE, CHECKOUT_WRITE],
+        raw={"email": "buyer@example.com"},
+    )
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc("tools/call", {"name": "complete_checkout", "arguments": {}}),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    error = response.json()["error"]
+    assert error["code"] == -32602
+    assert "Unknown tool" not in error["message"]

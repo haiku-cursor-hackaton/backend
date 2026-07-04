@@ -50,6 +50,7 @@ class PaymentAuthorizationService:
         order_id: str,
         amount_minor: int,
         currency: str,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         payment, checkout = await self._load_owned_payment(authorization_id, business_id)
         payment_status = str(payment.get("status") or "")
@@ -78,6 +79,7 @@ class PaymentAuthorizationService:
             external_order_id=order_id,
             amount_minor=amount_minor,
             currency=currency,
+            idempotency_key=idempotency_key,
         )
 
         capture_result = await self._supabase.rpc(
@@ -190,6 +192,7 @@ class PaymentAuthorizationService:
         external_order_id: str,
         amount_minor: int,
         currency: str,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         checkout_session_id = checkout["id"]
         existing = _first_row(
@@ -204,7 +207,20 @@ class PaymentAuthorizationService:
             )
         )
         if existing is not None:
+            stored_key = (existing.get("snapshot") or {}).get("idempotency_key")
+            if idempotency_key and stored_key and stored_key != idempotency_key:
+                raise PaymentAuthorizationError(
+                    "Idempotency-Key conflict for existing order.",
+                    status_code=409,
+                )
             return existing
+
+        snapshot: dict[str, Any] = {
+            "external_order_id": external_order_id,
+            "source": "platform_accredit",
+        }
+        if idempotency_key:
+            snapshot["idempotency_key"] = idempotency_key
 
         created = await self._supabase.insert(
             "orders",
@@ -216,10 +232,7 @@ class PaymentAuthorizationService:
                 "status": "created",
                 "total_minor": amount_minor,
                 "currency": currency,
-                "snapshot": {
-                    "external_order_id": external_order_id,
-                    "source": "platform_accredit",
-                },
+                "snapshot": snapshot,
             },
         )
         row = _first_row(created)

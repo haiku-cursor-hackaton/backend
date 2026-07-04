@@ -77,5 +77,10 @@ class SupabaseClient:
         return self._parse_response(response)
 
     async def update(self, table: str, payload: dict, *, query: dict[str, str]) -> Any:
-        response = await self._client.patch(f"/{table}", json=payload, params=query)
+        response = await self._client.patch(
+            f"/{table}",
+            json=payload,
+            params=query,
+            headers={"Prefer": "return=representation"},
+        )
         return self._parse_response(response)

@@ -21,11 +21,15 @@ from app.services.key_issuer import issue_api_key
 from app.services.merchant_registration import (
     MerchantRegistrationError,
     MerchantRegistrationService,
+    extract_capabilities,
+    extract_rest_endpoint,
     normalize_root_url,
+    well_known_url,
 )
 
 DEFAULT_MANIFEST = _BACKEND_ROOT / "fixtures" / "demo_seed_manifest.json"
 DEFAULT_OUTPUT = _BACKEND_ROOT.parent / "temp" / "demo_seed_credentials.json"
+DEFAULT_MCP_ENV = _BACKEND_ROOT.parent / "temp" / "genko_mcp.env"
 DEMO_NAME_PREFIX = "[DEMO]"
 
 
@@ -367,8 +371,11 @@ class DemoSeeder:
         existing = await self._find_demo_business_by_domain(domain)
         if existing is not None:
             business_id = str(existing["id"])
-            root_url = normalize_root_url(
-                str(existing.get("well_known_url") or business_spec["root_url"]).replace("/.well-known/ucp", "")
+            root_url = normalize_root_url(business_spec["root_url"])
+            await self._refresh_demo_business(
+                business_id=business_id,
+                owner_id=owner_id,
+                business_spec=business_spec,
             )
             return business_id, root_url
 
@@ -473,6 +480,42 @@ class DemoSeeder:
             )
         return business
 
+    async def _refresh_demo_business(
+        self,
+        *,
+        business_id: str,
+        owner_id: str,
+        business_spec: dict[str, Any],
+    ) -> None:
+        assert self._supabase is not None
+        root_url = normalize_root_url(business_spec["root_url"])
+        updates: dict[str, Any] = {
+            "owner_id": owner_id,
+            "name": business_spec["name"],
+            "category": business_spec.get("category"),
+            "status": "active",
+            "well_known_url": well_known_url(root_url),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(well_known_url(root_url))
+                response.raise_for_status()
+                profile = response.json()
+            if isinstance(profile, dict):
+                updates["ucp_base_url"] = extract_rest_endpoint(profile)
+                updates["ucp_capabilities"] = extract_capabilities(profile)
+        except Exception:
+            # Keep the existing row usable even when the demo store is temporarily down.
+            updates.setdefault("ucp_base_url", business_spec.get("ucp_base_url") or f"{root_url}/ucp/v1")
+
+        await self._supabase.update(
+            "businesses",
+            updates,
+            query={"id": f"eq.{business_id}"},
+        )
+        self._update_calls += 1
+
     def _write_credentials(self, result: SeedResult) -> None:
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -497,6 +540,17 @@ class DemoSeeder:
         with self._output_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2)
             handle.write("\n")
+        DEFAULT_MCP_ENV.write_text(
+            "\n".join(
+                [
+                    f"GENKO_MCP_URL={result.mcp_url}",
+                    f"GENKO_MCP_API_KEY={result.mcp_api_key}",
+                    f"GENKO_MERCHANT_URL={result.merchant_url}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
 
     def _print_summary(self, result: SeedResult) -> None:
         print("Demo seed applied successfully.")

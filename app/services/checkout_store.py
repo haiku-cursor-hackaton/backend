@@ -12,8 +12,20 @@ def _first_row(result: Any) -> dict[str, Any] | None:
         row = result[0]
         return row if isinstance(row, dict) else None
     if isinstance(result, dict):
+        if not result:
+            return None
         return result
     return None
+
+
+def _merge_persisted_row(result: Any, *, fallback: dict[str, Any]) -> dict[str, Any]:
+    row = _first_row(result)
+    if row is not None and row.get("id"):
+        return row
+    merged = dict(fallback)
+    if row is not None:
+        merged.update(row)
+    return merged
 
 
 def extract_total_minor(checkout_payload: dict[str, Any]) -> tuple[int, str]:
@@ -92,8 +104,7 @@ async def upsert_checkout_from_ucp(
             {k: v for k, v in fields.items() if k not in {"profile_id", "business_id", "external_checkout_id"}},
             query={"id": f"eq.{existing['id']}"},
         )
-        row = _first_row(updated)
-        return row if row is not None else {**existing, **fields}
+        return _merge_persisted_row(updated, fallback={**existing, **fields})
 
     inserted = await supabase.insert("checkout_sessions", fields)
     row = _first_row(inserted)
@@ -168,8 +179,7 @@ async def upsert_order_from_ucp(
             {k: v for k, v in fields.items() if k != "checkout_session_id"},
             query={"id": f"eq.{existing['id']}"},
         )
-        row = _first_row(updated)
-        return row if row is not None else {**existing, **fields}
+        return _merge_persisted_row(updated, fallback={**existing, **fields})
 
     inserted = await supabase.insert("orders", fields)
     row = _first_row(inserted)

@@ -307,7 +307,7 @@ class McpGateway:
 
     async def dispatch(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name not in TOOL_SCOPES:
-            raise KeyError(tool_name)
+            raise ValueError(f"Unknown tool: {tool_name}")
 
         require_scope(self._context, TOOL_SCOPES[tool_name])
 
@@ -387,7 +387,7 @@ class McpGateway:
             elif tool_name == "get_order":
                 payload = await ucp_client.get_order(args["id"])
             else:
-                raise KeyError(tool_name)
+                raise ValueError(f"Unknown tool: {tool_name}")
 
             await record_usage_event(
                 self._supabase,
@@ -458,11 +458,13 @@ def build_mcp_router(*, path: str = "/mcp") -> APIRouter:
             else:
                 return _rpc_error(request_id, -32602, "Invalid arguments: expected object")
 
+            tool = str(tool_name or "")
+            if tool not in TOOL_SCOPES:
+                return _rpc_error(request_id, -32601, f"Unknown tool: {tool_name}")
+
             gateway = McpGateway(supabase=supabase, settings=settings, context=context)
             try:
-                payload = await gateway.dispatch(str(tool_name), dict(arguments))
-            except KeyError:
-                return _rpc_error(request_id, -32601, f"Unknown tool: {tool_name}")
+                payload = await gateway.dispatch(tool, dict(arguments))
             except Exception as error:
                 await record_usage_event(
                     supabase,

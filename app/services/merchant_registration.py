@@ -21,7 +21,10 @@ def normalize_root_url(root_url: str) -> str:
 
 def domain_from_url(url: str) -> str:
     parsed = urlparse(url)
-    host = parsed.netloc or parsed.path.split("/")[0]
+    host = parsed.hostname
+    if not host:
+        raw_host = parsed.netloc or parsed.path.split("/")[0]
+        host = raw_host.split(":", 1)[0]
     if not host:
         raise MerchantRegistrationError(f"Could not extract domain from URL: {url}")
     return host.lower()

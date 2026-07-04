@@ -160,6 +160,13 @@ def _extract_order_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_product_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    product = payload.get("product")
+    if isinstance(product, dict):
+        return product
+    return payload
+
+
 def _extract_payment_reference(payload: dict[str, Any]) -> str | None:
     payment = payload.get("payment")
     if not isinstance(payment, dict):
@@ -254,7 +261,8 @@ async def run_smoke(ctx: SmokeContext) -> int:
                     request_id=4,
                 )
                 product_payload = _structured(product_result)
-                if product_payload.get("id") == ctx.product_id:
+                product = _extract_product_payload(product_payload)
+                if product.get("id") == ctx.product_id:
                     _record(ctx, "get_product", "pass")
                 else:
                     _record(ctx, "get_product", "fail", "product id mismatch")
