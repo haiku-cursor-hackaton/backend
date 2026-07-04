@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     mcp_path: str = Field(default="/mcp", validation_alias="MCP_PATH")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     demo_phone_number: str = Field(default="+10000000000", validation_alias="DEMO_PHONE_NUMBER")
+    gateway_agent_name: str = Field(default="genko-gateway/0.1", validation_alias="GATEWAY_AGENT_NAME")
 
 
 @lru_cache
