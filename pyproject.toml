@@ -1,0 +1,23 @@
+[project]
+name = "genko-backend"
+version = "0.1.0"
+description = "Genko MCP gateway backend over UCP merchants"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "pydantic-settings",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
