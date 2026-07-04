@@ -1,0 +1,3 @@
+# backemd
+
+Backend del proyecto haiku-cursor-hackaton.
