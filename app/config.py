@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     public_base_url: str = Field(default="http://127.0.0.1:8000", validation_alias="PUBLIC_BASE_URL")
     mcp_path: str = Field(default="/mcp", validation_alias="MCP_PATH")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
+    demo_phone_number: str = Field(default="+10000000000", validation_alias="DEMO_PHONE_NUMBER")
 
 
 @lru_cache
