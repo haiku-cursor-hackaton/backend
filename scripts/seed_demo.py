@@ -280,7 +280,6 @@ class DemoSeeder:
                 "id": client_id,
                 "account_type": client_spec["account_type"],
                 "full_name": client_spec["full_name"],
-                "email": client_spec["email"],
             },
             on_conflict="id",
         )
@@ -292,7 +291,6 @@ class DemoSeeder:
                 "id": owner_id,
                 "account_type": owner_spec["account_type"],
                 "full_name": owner_spec["full_name"],
-                "email": owner_spec["email"],
             },
             on_conflict="id",
         )
@@ -306,7 +304,7 @@ class DemoSeeder:
                 "available_minor": wallet_spec["available_minor"],
                 "reserved_minor": wallet_spec["reserved_minor"],
             },
-            on_conflict="profile_id,currency",
+            on_conflict="profile_id",
         )
         self._upsert_calls += 1
 
@@ -382,20 +380,65 @@ class DemoSeeder:
                 category=business_spec.get("category"),
                 root_url=business_spec["root_url"],
             )
-        except MerchantRegistrationError as exc:
-            raise RuntimeError(f"Merchant registration failed: {exc.message}") from exc
+            self._insert_calls += 3
+            business_id = str(registration["business_id"])
+            await revoke_demo_seed_keys(
+                self._supabase,
+                label=f"{business_spec['name']} SDK key",
+                business_id=business_id,
+            )
+            self._update_calls += 1
+            return business_id, str(registration["root_url"])
+        except MerchantRegistrationError:
+            print(
+                "[seed] Demo store not reachable; inserting business from manifest offline.",
+                file=sys.stderr,
+            )
+            return await self._insert_demo_business_offline(
+                owner_id=owner_id,
+                business_spec=business_spec,
+            )
 
-        self._insert_calls += 3
+    async def _insert_demo_business_offline(
+        self,
+        *,
+        owner_id: str,
+        business_spec: dict[str, Any],
+    ) -> tuple[str, str]:
+        assert self._supabase is not None
+        root_url = normalize_root_url(business_spec["root_url"])
+        well_known = business_spec.get("well_known_url") or f"{root_url}/.well-known/ucp"
+        ucp_base_url = business_spec.get("ucp_base_url") or f"{root_url}/ucp/v1"
+        domain = business_spec["domain"]
 
-        business_id = str(registration["business_id"])
-        await revoke_demo_seed_keys(
-            self._supabase,
-            label=f"{business_spec['name']} SDK key",
-            business_id=business_id,
+        business_result = await self._supabase.insert(
+            "businesses",
+            {
+                "owner_id": owner_id,
+                "name": business_spec["name"],
+                "category": business_spec.get("category"),
+                "status": "active",
+                "well_known_url": well_known,
+                "ucp_base_url": ucp_base_url,
+                "ucp_capabilities": {},
+            },
         )
-        self._update_calls += 1
+        self._insert_calls += 1
+        business_row = _first_row(business_result)
+        if business_row is None or not business_row.get("id"):
+            raise RuntimeError("Offline business insert did not return an id")
+        business_id = str(business_row["id"])
 
-        return business_id, str(registration["root_url"])
+        await self._supabase.insert(
+            "merchant_domains",
+            {
+                "business_id": business_id,
+                "domain": domain,
+                "verified": True,
+            },
+        )
+        self._insert_calls += 1
+        return business_id, root_url
 
     async def _find_demo_business_by_domain(self, domain: str) -> dict[str, Any] | None:
         assert self._supabase is not None
