@@ -158,12 +158,18 @@ async def connect_merchant(
 
     service = MerchantRegistrationService(supabase)
     name = (body.business_name or "").strip() or DEFAULT_MERCHANT_NAME
+    category = (body.category or "").strip()
+    description = (body.description or "").strip()
+    if not category:
+        raise HTTPException(status_code=400, detail="category is required")
+    if not description:
+        raise HTTPException(status_code=400, detail="description is required")
     try:
         result = await service.bootstrap_pending(
             owner_id=user.id,
             name=name,
-            category=body.category,
-            description=body.description,
+            category=category,
+            description=description,
         )
     except MerchantRegistrationError as exc:
         raise HTTPException(status_code=400, detail=exc.message) from exc
