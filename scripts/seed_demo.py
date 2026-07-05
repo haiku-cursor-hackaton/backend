@@ -18,6 +18,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
+from app.auth.api_keys import GeneratedAPIKey, hash_api_key
 from app.db.supabase import SupabaseClient
 from app.services.key_issuer import issue_api_key
 from app.services.merchant_registration import (
@@ -55,7 +56,7 @@ def _first_row(result: Any) -> dict[str, Any] | None:
     return None
 
 
-def plan_seed_actions(manifest: dict[str, Any]) -> list[str]:
+def plan_seed_actions(manifest: dict[str, Any], *, rotate_keys: bool = False) -> list[str]:
     client = manifest["client"]
     owner = manifest["merchant_owner"]
     business = manifest["business"]
@@ -63,6 +64,21 @@ def plan_seed_actions(manifest: dict[str, Any]) -> list[str]:
     label = manifest["api_key_label"]
     mcp_scopes = manifest["scopes"]["mcp"]
     sdk_scopes = manifest["scopes"]["sdk"]
+
+    if rotate_keys:
+        key_steps = [
+            f"Revoke prior active API keys labeled '{label}' for client profile",
+            f"Issue MCP API key for client (scopes: {', '.join(mcp_scopes)}, label={label})",
+            f"Revoke prior active API keys labeled '{label}' for demo business",
+            f"Issue SDK API key for business (scopes: {', '.join(sdk_scopes)}, label={label})",
+        ]
+    else:
+        key_steps = [
+            (
+                f"Reuse active demo API keys labeled '{label}' when present "
+                "(issue only on first seed or when missing)"
+            ),
+        ]
 
     return [
         f"Create or fetch auth user: {client['email']} (client)",
@@ -77,11 +93,8 @@ def plan_seed_actions(manifest: dict[str, Any]) -> list[str]:
             f"Register or reuse demo merchant '{business['name']}' at "
             f"{business['root_url']} (domain={business['domain']})"
         ),
-        f"Revoke prior active API keys labeled '{label}' for client profile",
-        f"Issue MCP API key for client (scopes: {', '.join(mcp_scopes)}, label={label})",
-        f"Revoke prior active API keys labeled '{label}' for demo business",
-        f"Issue SDK API key for business (scopes: {', '.join(sdk_scopes)}, label={label})",
-        "Write credentials JSON to output path (contains plaintext keys once)",
+        *key_steps,
+        "Write credentials JSON to output path (reuses existing plaintext keys when possible)",
     ]
 
 
@@ -102,6 +115,170 @@ def apply_runtime_overrides(
     business["ucp_base_url"] = f"{root_url}/ucp/v1"
     business["domain"] = hostname.lower()
     return updated
+
+
+def load_stored_credentials(path: Path) -> dict[str, str] | None:
+    if not path.is_file():
+        return None
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    mcp_api_key = data.get("mcp_api_key")
+    sdk_api_key = data.get("sdk_api_key")
+    if not isinstance(mcp_api_key, str) or not mcp_api_key:
+        return None
+    if not isinstance(sdk_api_key, str) or not sdk_api_key:
+        return None
+
+    return {
+        "mcp_api_key": mcp_api_key,
+        "mcp_api_key_prefix": str(data.get("mcp_api_key_prefix") or mcp_api_key[:16]),
+        "sdk_api_key": sdk_api_key,
+        "sdk_api_key_prefix": str(data.get("sdk_api_key_prefix") or sdk_api_key[:16]),
+    }
+
+
+async def find_active_demo_key(
+    supabase: SupabaseClient,
+    *,
+    label: str,
+    key_type: str,
+    profile_id: str | None = None,
+    business_id: str | None = None,
+) -> dict[str, Any] | None:
+    query: dict[str, str] = {
+        "label": f"eq.{label}",
+        "status": "eq.active",
+        "key_type": f"eq.{key_type}",
+        "select": "id,key_prefix,key_type,profile_id,business_id,scopes",
+        "limit": "1",
+    }
+    if profile_id is not None:
+        query["profile_id"] = f"eq.{profile_id}"
+    if business_id is not None:
+        query["business_id"] = f"eq.{business_id}"
+
+    rows = await supabase.select("api_keys", query=query)
+    return _first_row(rows)
+
+
+def _generated_key_from_plaintext(plaintext: str, key_type: str) -> GeneratedAPIKey:
+    return GeneratedAPIKey(
+        plaintext=plaintext,
+        key_hash=hash_api_key(plaintext),
+        key_prefix=plaintext[:16],
+        key_type=key_type,  # type: ignore[arg-type]
+    )
+
+
+async def resolve_demo_api_keys(
+    supabase: SupabaseClient,
+    *,
+    label: str,
+    profile_id: str,
+    business_id: str,
+    mcp_scopes: list[str],
+    sdk_scopes: list[str],
+    output_path: Path,
+    rotate_keys: bool = False,
+) -> tuple[GeneratedAPIKey, GeneratedAPIKey, int]:
+    """Return MCP and SDK keys, plus how many new keys were issued."""
+    if rotate_keys:
+        await revoke_demo_seed_keys(supabase, label=label, profile_id=profile_id)
+        await revoke_demo_seed_keys(supabase, label=label, business_id=business_id)
+        mcp_key = await issue_api_key(
+            supabase,
+            "mcp",
+            profile_id=profile_id,
+            scopes=mcp_scopes,
+            label=label,
+        )
+        sdk_key = await issue_api_key(
+            supabase,
+            "sdk",
+            business_id=business_id,
+            scopes=sdk_scopes,
+            label=label,
+        )
+        return mcp_key, sdk_key, 2
+
+    existing_mcp = await find_active_demo_key(
+        supabase,
+        label=label,
+        key_type="mcp",
+        profile_id=profile_id,
+    )
+    existing_sdk = await find_active_demo_key(
+        supabase,
+        label=label,
+        key_type="sdk",
+        business_id=business_id,
+    )
+    stored = load_stored_credentials(output_path)
+    issued_count = 0
+
+    if existing_mcp is not None and existing_sdk is not None:
+        if stored is None:
+            raise RuntimeError(
+                "Active demo API keys already exist but credentials file is missing or invalid. "
+                f"Restore {output_path} or rerun once with --rotate-keys."
+            )
+        if stored["mcp_api_key_prefix"] != existing_mcp.get("key_prefix"):
+            raise RuntimeError(
+                "Stored MCP API key prefix does not match the active demo key in Supabase. "
+                f"Restore {output_path} or rerun once with --rotate-keys."
+            )
+        if stored["sdk_api_key_prefix"] != existing_sdk.get("key_prefix"):
+            raise RuntimeError(
+                "Stored SDK API key prefix does not match the active demo key in Supabase. "
+                f"Restore {output_path} or rerun once with --rotate-keys."
+            )
+        return (
+            _generated_key_from_plaintext(stored["mcp_api_key"], "mcp"),
+            _generated_key_from_plaintext(stored["sdk_api_key"], "sdk"),
+            0,
+        )
+
+    if existing_mcp is None:
+        mcp_key = await issue_api_key(
+            supabase,
+            "mcp",
+            profile_id=profile_id,
+            scopes=mcp_scopes,
+            label=label,
+        )
+        issued_count += 1
+    elif stored is not None and stored["mcp_api_key_prefix"] == existing_mcp.get("key_prefix"):
+        mcp_key = _generated_key_from_plaintext(stored["mcp_api_key"], "mcp")
+    else:
+        raise RuntimeError(
+            "Active MCP demo key exists but credentials file is missing or stale. "
+            f"Restore {output_path} or rerun once with --rotate-keys."
+        )
+
+    if existing_sdk is None:
+        sdk_key = await issue_api_key(
+            supabase,
+            "sdk",
+            business_id=business_id,
+            scopes=sdk_scopes,
+            label=label,
+        )
+        issued_count += 1
+    elif stored is not None and stored["sdk_api_key_prefix"] == existing_sdk.get("key_prefix"):
+        sdk_key = _generated_key_from_plaintext(stored["sdk_api_key"], "sdk")
+    else:
+        raise RuntimeError(
+            "Active SDK demo key exists but credentials file is missing or stale. "
+            f"Restore {output_path} or rerun once with --rotate-keys."
+        )
+
+    return mcp_key, sdk_key, issued_count
 
 
 async def revoke_demo_seed_keys(
@@ -309,6 +486,7 @@ class DemoSeeder:
         backend_url: str | None = None,
         admin_client: AdminAuthClient | None = None,
         supabase: SupabaseClient | None = None,
+        rotate_keys: bool = False,
     ) -> None:
         self._manifest = manifest
         self._dry_run = dry_run
@@ -321,6 +499,7 @@ class DemoSeeder:
             self._mcp_path = f"/{self._mcp_path}"
         self._admin = admin_client
         self._supabase = supabase
+        self._rotate_keys = rotate_keys
         self._insert_calls = 0
         self._upsert_calls = 0
         self._update_calls = 0
@@ -330,7 +509,7 @@ class DemoSeeder:
         return self._insert_calls + self._upsert_calls + self._update_calls
 
     async def run(self) -> SeedResult:
-        actions = plan_seed_actions(self._manifest)
+        actions = plan_seed_actions(self._manifest, rotate_keys=self._rotate_keys)
         if self._dry_run:
             for action in actions:
                 print(f"[dry-run] {action}")
@@ -414,29 +593,19 @@ class DemoSeeder:
         self._update_calls += 1
         self._update_calls += released_payments
 
-        await revoke_demo_seed_keys(self._supabase, label=label, profile_id=client_id)
-        self._update_calls += 1
-
-        mcp_key = await issue_api_key(
+        mcp_key, sdk_key, keys_issued = await resolve_demo_api_keys(
             self._supabase,
-            "mcp",
+            label=label,
             profile_id=client_id,
-            scopes=mcp_scopes,
-            label=label,
-        )
-        self._insert_calls += 1
-
-        await revoke_demo_seed_keys(self._supabase, label=label, business_id=business_id)
-        self._update_calls += 1
-
-        sdk_key = await issue_api_key(
-            self._supabase,
-            "sdk",
             business_id=business_id,
-            scopes=sdk_scopes,
-            label=label,
+            mcp_scopes=mcp_scopes,
+            sdk_scopes=sdk_scopes,
+            output_path=self._output_path,
+            rotate_keys=self._rotate_keys,
         )
-        self._insert_calls += 1
+        if self._rotate_keys:
+            self._update_calls += 2
+        self._insert_calls += keys_issued
 
         result = SeedResult(
             supabase_url=self._supabase_url,
@@ -617,8 +786,8 @@ class DemoSeeder:
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "_warning": (
-                "Contains plaintext API keys generated once by scripts/seed_demo.py. "
-                "Do not commit this file. Rotate keys if exposed."
+                "Contains plaintext API keys for local demo use. "
+                "Do not commit this file. Use --rotate-keys only when you intentionally need new keys."
             ),
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "supabase_url": result.supabase_url,
@@ -656,6 +825,10 @@ class DemoSeeder:
         print(f"  Business:        {result.business_id} ({result.domain})")
         print(f"  MCP key prefix:  {result.mcp_api_key_prefix}")
         print(f"  SDK key prefix:  {result.sdk_api_key_prefix}")
+        if self._rotate_keys:
+            print("  API keys:        rotated (new keys issued)")
+        else:
+            print("  API keys:        reused existing demo keys when available")
         print(f"  Backend URL:     {result.backend_url}")
         print(f"  MCP URL:         {result.mcp_url}")
         print(f"  Merchant URL:    {result.merchant_url}")
@@ -694,6 +867,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--merchant-url",
         help="Override demo merchant root URL and derived discovery endpoints.",
+    )
+    parser.add_argument(
+        "--rotate-keys",
+        action="store_true",
+        help="Revoke and reissue demo MCP/SDK keys. Default is to reuse existing keys.",
     )
     return parser.parse_args(argv)
 
@@ -743,6 +921,7 @@ async def main_async(argv: list[str] | None = None) -> int:
             backend_url=args.backend_url,
             admin_client=admin_client,
             supabase=supabase,
+            rotate_keys=args.rotate_keys,
         )
         await seeder.run()
         return 0

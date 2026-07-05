@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
@@ -44,6 +45,11 @@ async def get_payment_authorization(
         return await service.get_authorization(authorization_id, business_id)
     except PaymentAuthorizationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Payment authorization backend unavailable.",
+        ) from exc
 
 
 @router.post("/{authorization_id}/accredit")

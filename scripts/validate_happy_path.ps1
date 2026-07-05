@@ -2,7 +2,8 @@ param(
     [string]$BackendUrl = "http://127.0.0.1:8000",
     [int]$MerchantPort = 8100,
     [string]$CredentialsPath = "D:\cursor-hackaton\temp\demo_seed_credentials.json",
-    [bool]$RestartBackend = $true
+    [bool]$RestartBackend = $true,
+    [switch]$SkipSmoke
 )
 
 $ErrorActionPreference = "Stop"
@@ -151,9 +152,14 @@ if (-not $creds.sdk_api_key) {
 }
 
 Write-Host "3/5 Reiniciando demo store con sdk_api_key fresca"
-Stop-DemoStore -Port $MerchantPort
-Start-DemoStore -PlatformUrl $BackendUrl -Port $MerchantPort -PlatformApiKey $creds.sdk_api_key
-Wait-HttpOk -Url "$merchantUrl/.well-known/ucp" -TimeoutSeconds 30
+& "$backendRoot\scripts\restart_demo_store.ps1" -BackendUrl $BackendUrl -MerchantPort $MerchantPort -CredentialsPath $CredentialsPath
+
+if ($SkipSmoke) {
+    Write-Host "4/5 Smoke E2E omitido (-SkipSmoke). Listo para compra manual por MCP."
+    Write-Host "5/5 Validacion finalizada"
+    Write-Host "Usa las keys de: $CredentialsPath"
+    exit 0
+}
 
 Write-Host "4/5 Ejecutando smoke E2E"
 python scripts/smoke_test.py --credentials $CredentialsPath

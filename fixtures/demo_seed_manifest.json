@@ -20,7 +20,7 @@
     "domain": "127.0.0.1"
   },
   "wallet": {
-    "available_minor": 2000,
+    "available_minor": 10000,
     "currency": "USD",
     "reserved_minor": 0
   },

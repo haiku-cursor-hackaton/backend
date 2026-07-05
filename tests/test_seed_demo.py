@@ -13,6 +13,7 @@ from scripts.seed_demo import (
     DemoSeeder,
     apply_runtime_overrides,
     load_manifest,
+    load_stored_credentials,
     plan_seed_actions,
     revoke_demo_seed_keys,
 )
@@ -68,7 +69,7 @@ def test_manifest_loads() -> None:
     assert manifest["client"]["email"] == "demo-client@genko.local"
     assert manifest["merchant_owner"]["account_type"] == "business"
     assert manifest["business"]["root_url"] == "http://127.0.0.1:8111"
-    assert manifest["wallet"]["available_minor"] == 2000
+    assert manifest["wallet"]["available_minor"] == 10000
     assert manifest["api_key_label"] == "demo-seed-v1"
     assert "catalog:read" in manifest["scopes"]["mcp"]
     assert "payment:verify" in manifest["scopes"]["sdk"]
@@ -78,8 +79,38 @@ def test_plan_seed_actions_includes_core_steps() -> None:
     manifest = load_manifest(MANIFEST_PATH)
     actions = plan_seed_actions(manifest)
     assert any("demo-client@genko.local" in action for action in actions)
-    assert any("2000" in action and "USD" in action for action in actions)
+    assert any("10000" in action and "USD" in action for action in actions)
     assert any("demo-seed-v1" in action for action in actions)
+    assert any("Reuse active demo API keys" in action for action in actions)
+
+
+def test_plan_seed_actions_rotate_keys() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    actions = plan_seed_actions(manifest, rotate_keys=True)
+    assert any("Revoke prior active API keys" in action for action in actions)
+    assert any("Issue MCP API key" in action for action in actions)
+    assert any("Issue SDK API key" in action for action in actions)
+
+
+def test_load_stored_credentials_reads_keys(tmp_path: Path) -> None:
+    creds_path = tmp_path / "demo_seed_credentials.json"
+    creds_path.write_text(
+        json.dumps(
+            {
+                "mcp_api_key": "gk_mcp_test_key_value",
+                "mcp_api_key_prefix": "gk_mcp_test_key",
+                "sdk_api_key": "gk_sdk_test_key_value",
+                "sdk_api_key_prefix": "gk_sdk_test_key",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_stored_credentials(creds_path)
+
+    assert loaded is not None
+    assert loaded["mcp_api_key"] == "gk_mcp_test_key_value"
+    assert loaded["sdk_api_key"] == "gk_sdk_test_key_value"
 
 
 def test_apply_runtime_overrides_updates_demo_business_urls() -> None:

@@ -1,3 +1,4 @@
+import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -67,4 +68,9 @@ async def _resolve_api_key_context(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=exc.message,
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication backend unavailable.",
         ) from exc
