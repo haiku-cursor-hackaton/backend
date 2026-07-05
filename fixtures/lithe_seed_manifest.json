@@ -1,0 +1,40 @@
+{
+  "version": "lithe-seed-v1",
+  "client": {
+    "email": "lithe-agent@example.com",
+    "full_name": "Lithe Test Agent",
+    "account_type": "client",
+    "phone_number": "+15551234000"
+  },
+  "merchant_owner": {
+    "email": "lithe-merchant@example.com",
+    "full_name": "Lithe Merchant Owner",
+    "account_type": "business"
+  },
+  "business": {
+    "name": "Lithe",
+    "root_url": "https://lithe-production.up.railway.app",
+    "category": "apparel",
+    "ucp_inbound_api_key_env": "LITHE_UCP_GATEWAY_API_KEY"
+  },
+  "wallet": {
+    "available_minor": 50000,
+    "currency": "USD",
+    "reserved_minor": 0
+  },
+  "scopes": {
+    "mcp": [
+      "catalog:read",
+      "checkout:write",
+      "purchase:execute",
+      "order:read",
+      "wallet:read"
+    ],
+    "sdk": [
+      "payment:verify",
+      "payment:accredit",
+      "payment:release"
+    ]
+  },
+  "api_key_label": "lithe-production-v1"
+}

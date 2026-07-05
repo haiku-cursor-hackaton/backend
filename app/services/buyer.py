@@ -11,7 +11,7 @@ def buyer_from_context(context: ApiKeyContext, settings: Settings) -> dict[str, 
     profile_id = context.profile_id or "unknown"
 
     buyer: dict[str, Any] = {
-        "email": raw.get("email") or f"buyer+{profile_id}@genko.local",
+        "email": raw.get("email") or f"buyer+{profile_id}@example.com",
         "phone_number": raw.get("phone_number") or raw.get("phone") or settings.demo_phone_number,
     }
 
