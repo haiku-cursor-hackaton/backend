@@ -97,13 +97,17 @@ Responsabilidades:
 
 * Validar `Authorization: Bearer <user_api_key>`.
 * Recuperar usuario y perfil.
-* Exponer las nueve tools.
+* Exponer las **doce** tools (tres nativas de plataforma + nueve proxy UCP).
 * Registrar nombre y versión del harness.
-* Convertir la tool MCP en una petición UCP REST.
+* Convertir la tool MCP en una petición UCP REST (o consulta Supabase para tools nativas).
 
 Herramientas públicas:
 
 ```text
+get_user_profile          # perfil + wallet (plataforma)
+discover_commerces        # listar/buscar comercios registrados (plataforma)
+get_purchase_history      # historial de compras del cliente (plataforma)
+
 search_catalog
 lookup_catalog
 get_product
@@ -114,6 +118,11 @@ complete_checkout
 cancel_checkout
 get_order
 ```
+
+Las tres primeras no requieren `merchant_url`. El resto sí (salvo `get_checkout` /
+`update_checkout` / `complete_checkout` / `cancel_checkout`, donde el checkout id
+ya está ligado al comercio). Para multi-comercio, el agente debe llamar
+`discover_commerces` antes de `search_catalog`.
 
 El MCP propio del SDK puede usar otros nombres; no importa porque el gateway llama al comercio mediante REST.
 
@@ -445,25 +454,28 @@ La merchant API key generada por la plataforma sirve para **verificar y acredita
 
 ## 4. UCP Client
 
-* Probar las nueve operaciones directamente contra Lithe.
+* Probar las nueve operaciones UCP directamente contra Lithe (más las tres tools nativas de plataforma vía MCP).
 
 ## 5. MCP Gateway
 
-* FastMCP.
-* User API key.
-* Nueve tools.
+* FastMCP / JSON-RPC en `/mcp`.
+* User API key (`gk_mcp_*`).
+* **Doce** tools (ver §1).
 * Inyección automática del buyer.
+* `discover_commerces` para feed multi-comercio.
 
 ## 6. Happy path
 
 ```text
-search_catalog
+discover_commerces (opcional)
+→ search_catalog
 → create_checkout
 → complete_checkout
 → merchant verify
 → create order
 → accredit
 → get_order
+→ get_purchase_history
 ```
 
 ## 7. Dashboard

@@ -1,10 +1,20 @@
 param(
-    [string]$EnvFile = "D:\cursor-hackaton\temp\genko_mcp.env",
-    [string]$BridgeScript = "D:\cursor-hackaton\backend\scripts\genko_mcp_stdio.py"
+    [string]$EnvFile = "",
+    [string]$BridgeScript = ""
 )
 
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
+
+if (-not $EnvFile) {
+    $EnvFile = Join-Path (Split-Path -Parent $repoRoot) "temp\genko_mcp.env"
+}
+if (-not $BridgeScript) {
+    $BridgeScript = Join-Path $scriptRoot "genko_mcp_stdio.py"
+}
+
 if (-not (Test-Path -LiteralPath $EnvFile)) {
-    throw "Missing env file: $EnvFile"
+    throw "Missing env file: $EnvFile (run scripts/seed_multi_merchant.py first)"
 }
 
 if (-not (Test-Path -LiteralPath $BridgeScript)) {
