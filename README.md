@@ -39,6 +39,41 @@ When a merchant requires inbound auth (for example Lithe with `UCP_GATEWAY_API_K
 
 Genko stores the key in `businesses.encrypted_ucp_api_key` and sends `Authorization: Bearer ...` on every `UcpRestClient` call. Configure Lithe with the returned `sdk_api_key` as `UCP_PLATFORM_API_KEY`.
 
+## Production deployment (Lithe E2E)
+
+The Genko platform is deployed on Railway in the **Lithe** project as
+`genko-platform`:
+
+| | |
+| --- | --- |
+| **URL** | `https://genko-platform-production.up.railway.app` |
+| **Health** | `GET /health` |
+| **Agent MCP** | `POST /mcp` (user `gk_mcp_*` key) |
+| **Lithe store** | `https://lithe-production.up.railway.app` |
+
+Seed Lithe merchant + agent keys (requires Supabase env in `.env`):
+
+```powershell
+python scripts/seed_lithe.py --backend-url https://genko-platform-production.up.railway.app
+```
+
+Credentials are written to `../temp/lithe_credentials.json` (gitignored). Set on
+Lithe Railway: `UCP_PLATFORM_URL` and `UCP_PLATFORM_API_KEY` from that file.
+
+Run the agent E2E smoke test (platform MCP → Lithe REST → wallet capture):
+
+```powershell
+python scripts/smoke_test.py --credentials ../temp/lithe_credentials.json `
+  --merchant-url https://lithe-production.up.railway.app
+```
+
+**Agent boundary:** user agents connect only to `POST /mcp` on the platform. They
+must not call merchant `/ucp/v1/*` directly. The vendor inbound key
+(`UCP_GATEWAY_API_KEY` on the store) authorizes **platform → store** REST only.
+
+> A separate `genko-backend` service on the `trusty-sleet` Railway project has a
+> broken public domain; use **`genko-platform`** above.
+
 ## Health check
 
 ```powershell

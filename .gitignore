@@ -19,3 +19,5 @@ Thumbs.db
 
 temp/
 **/demo_seed_credentials.json
+**/lithe_credentials.json
+**/multi_merchant_credentials.json

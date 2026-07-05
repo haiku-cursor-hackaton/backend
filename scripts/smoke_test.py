@@ -17,7 +17,7 @@ if str(_BACKEND_ROOT) not in sys.path:
 
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
 DEFAULT_MERCHANT_URL = "http://127.0.0.1:8100"
-EXPECTED_TOOL_COUNT = 9
+EXPECTED_TOOL_COUNT = 10
 
 
 @dataclass

@@ -1,0 +1,84 @@
+{
+  "version": "multi-merchant-v1",
+  "client": {
+    "email": "shopper-agent@example.com",
+    "full_name": "Multi-Merchant Test Agent",
+    "account_type": "client",
+    "phone_number": "+15551234001"
+  },
+  "wallet": {
+    "available_minor": 100000,
+    "currency": "USD",
+    "reserved_minor": 0
+  },
+  "scopes": {
+    "mcp": [
+      "catalog:read",
+      "checkout:write",
+      "purchase:execute",
+      "order:read",
+      "wallet:read"
+    ],
+    "sdk": [
+      "payment:verify",
+      "payment:accredit",
+      "payment:release"
+    ]
+  },
+  "api_key_label": "multi-merchant-v1",
+  "merchants": [
+    {
+      "slug": "lithe",
+      "name": "Lithe",
+      "category": "apparel",
+      "root_url": "https://lithe-production.up.railway.app",
+      "owner": {
+        "email": "lithe-merchant@example.com",
+        "full_name": "Lithe Merchant Owner",
+        "account_type": "business"
+      },
+      "vendor_api_key": "gk_vendor_lithe_76bb5e0d8ca429fe03f20834fc5147d12213c963",
+      "sample_products": [
+        {
+          "id": "bleach-rukia__S__black",
+          "search_query": "bleach shirt",
+          "note": "Anime predesign tee"
+        },
+        {
+          "id": "sailor-moon__M__black",
+          "search_query": "sailor moon",
+          "note": "Another predesign tee"
+        }
+      ]
+    },
+    {
+      "slug": "gear",
+      "name": "Genko Gear",
+      "category": "home-goods",
+      "root_url": "https://genko-gear-production.up.railway.app",
+      "owner": {
+        "email": "gear-merchant@example.com",
+        "full_name": "Genko Gear Owner",
+        "account_type": "business"
+      },
+      "vendor_api_key": "gk_vendor_gear_c8e2d61af49705b3",
+      "sample_products": [
+        {
+          "id": "mug-ceramic-white",
+          "search_query": "mug",
+          "note": "Ceramic mug"
+        },
+        {
+          "id": "poster-anime-city",
+          "search_query": "poster",
+          "note": "Wall poster"
+        },
+        {
+          "id": "stickers-pack-vinyl",
+          "search_query": "stickers",
+          "note": "Vinyl sticker pack"
+        }
+      ]
+    }
+  ]
+}
