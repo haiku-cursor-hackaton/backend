@@ -47,7 +47,6 @@ class GenkoBridge:
                 "Content-Type": "application/json",
             },
         )
-        self._tools: list[dict[str, Any]] = []
 
     def close(self) -> None:
         self._client.close()
@@ -64,13 +63,10 @@ class GenkoBridge:
             raise RuntimeError(str(error.get("message") or error))
         return body.get("result") or {}
 
-    def ensure_tools(self) -> list[dict[str, Any]]:
-        if self._tools:
-            return self._tools
+    def list_tools(self) -> list[dict[str, Any]]:
         result = self._post("tools/list")
         tools = result.get("tools") or []
-        self._tools = [tool for tool in tools if isinstance(tool, dict)]
-        return self._tools
+        return [tool for tool in tools if isinstance(tool, dict)]
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         args = _inject_merchant_url(arguments, self._merchant_url)
@@ -90,7 +86,7 @@ def handle_request(bridge: GenkoBridge, message: dict[str, Any]) -> dict[str, An
             request_id,
             {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": {"tools": {"listChanged": True}},
                 "serverInfo": SERVER_INFO,
             },
         )
@@ -99,7 +95,7 @@ def handle_request(bridge: GenkoBridge, message: dict[str, Any]) -> dict[str, An
         return None
 
     if method == "tools/list":
-        tools = bridge.ensure_tools()
+        tools = bridge.list_tools()
         return _rpc(request_id, {"tools": tools})
 
     if method == "tools/call":
