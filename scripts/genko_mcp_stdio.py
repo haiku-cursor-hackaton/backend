@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "genko-bridge", "version": "0.1.0"}
+SERVER_INFO = {"name": "genko-bridge", "version": "0.2.0"}
 DEFAULT_MERCHANT_URL = "http://127.0.0.1:8100"
 
 
