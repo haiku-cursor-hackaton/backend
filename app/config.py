@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     )
 
 
+def parse_cors_origins(raw: str) -> list[str]:
+    """Parse comma-separated CORS origins; tolerate quoted Railway env values."""
+    origins: list[str] = []
+    for part in raw.split(","):
+        origin = part.strip()
+        if not origin:
+            continue
+        if len(origin) >= 2 and origin[0] == origin[-1] and origin[0] in {'"', "'"}:
+            origin = origin[1:-1].strip()
+        origin = origin.rstrip("/")
+        if origin:
+            origins.append(origin)
+    return origins
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
