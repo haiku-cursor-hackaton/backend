@@ -8,21 +8,24 @@ from app.mcp.server import build_mcp_router
 
 app = FastAPI(title="Genko Backend")
 
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "https://genko-portal.netlify.app",
+]
+
 try:
     _settings = get_settings()
     _mcp_path = _settings.mcp_path
-    _cors_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
+    _extra_origins = [
+        origin.strip() for origin in _settings.cors_origins.split(",") if origin.strip()
     ]
+    _cors_origins = _DEFAULT_CORS_ORIGINS + _extra_origins
 except ValidationError:
     _mcp_path = "/mcp"
-    _cors_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
+    _cors_origins = _DEFAULT_CORS_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,

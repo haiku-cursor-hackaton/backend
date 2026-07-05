@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         default="+10000000000",
         validation_alias=AliasChoices("DEMO_PHONE_NUMBER", "demo_phone_number"),
     )
+    cors_origins: str = Field(
+        default="",
+        validation_alias=AliasChoices("CORS_ORIGINS", "cors_origins"),
+    )
     gateway_agent_name: str = Field(
         default="genko-gateway/0.1",
         validation_alias=AliasChoices("GATEWAY_AGENT_NAME", "gateway_agent_name"),
