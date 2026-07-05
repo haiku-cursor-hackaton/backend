@@ -14,6 +14,7 @@ from app.services.merchant_registration import (
     MerchantRegistrationError,
     MerchantRegistrationService,
 )
+from app.services.sdk_onboarding import build_sdk_install_prompt
 
 router = APIRouter(prefix="/v1/connect", tags=["connect"])
 
@@ -37,6 +38,7 @@ class ConnectMerchantRequest(BaseModel):
     full_name: str | None = None
     business_name: str | None = None
     category: str | None = None
+    description: str | None = None
 
 
 def _metadata_name(user: DashboardUser) -> str | None:
@@ -106,6 +108,7 @@ async def connect_merchant(
     body: ConnectMerchantRequest,
     user: Annotated[DashboardUser, Depends(get_current_dashboard_user)],
     supabase: Annotated[SupabaseClient, Depends(get_supabase_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     await supabase.upsert(
         "profiles",
@@ -150,6 +153,7 @@ async def connect_merchant(
             "already_bootstrapped": True,
             "sdk_api_key": None,
             "sdk_api_key_prefix": (key_row or {}).get("key_prefix"),
+            "sdk_install_prompt": None,
         }
 
     service = MerchantRegistrationService(supabase)
@@ -159,12 +163,18 @@ async def connect_merchant(
             owner_id=user.id,
             name=name,
             category=body.category,
+            description=body.description,
         )
     except MerchantRegistrationError as exc:
         raise HTTPException(status_code=400, detail=exc.message) from exc
 
+    sdk_key = result["sdk_api_key"]
     return {
         "profile_id": user.id,
         "already_bootstrapped": False,
+        "sdk_install_prompt": build_sdk_install_prompt(
+            sdk_api_key=sdk_key,
+            platform_url=settings.public_base_url,
+        ),
         **result,
     }

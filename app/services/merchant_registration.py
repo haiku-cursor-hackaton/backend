@@ -88,6 +88,7 @@ class MerchantRegistrationService:
         owner_id: str,
         name: str,
         category: str | None,
+        description: str | None = None,
     ) -> dict[str, Any]:
         business_result = await self._supabase.insert(
             "businesses",
@@ -95,6 +96,7 @@ class MerchantRegistrationService:
                 "owner_id": owner_id,
                 "name": name,
                 "category": category,
+                "description": description,
                 "status": "pending",
                 "well_known_url": None,
                 "ucp_capabilities": {},
