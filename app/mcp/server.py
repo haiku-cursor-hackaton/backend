@@ -23,6 +23,7 @@ from app.services.merchant_resolver import (
     MerchantResolutionError,
     ResolvedMerchant,
     ensure_capability,
+    merchant_from_business_row,
     resolve_merchant,
 )
 from app.services.ucp_client import UcpRestClient
@@ -289,19 +290,14 @@ class McpGateway:
                     "businesses",
                     query={
                         "id": f"eq.{local['business_id']}",
-                        "select": "id,ucp_base_url,ucp_capabilities",
+                        "select": "id,ucp_base_url,ucp_capabilities,encrypted_ucp_api_key",
                         "limit": "1",
                     },
                 )
             )
             if business is None or not business.get("ucp_base_url"):
                 raise MerchantResolutionError("Business UCP configuration not found")
-            return ResolvedMerchant(
-                business_id=str(business["id"]),
-                ucp_base_url=str(business["ucp_base_url"]).rstrip("/"),
-                ucp_capabilities=dict(business.get("ucp_capabilities") or {}),
-                raw=business,
-            )
+            return merchant_from_business_row(business)
 
         raise ValueError("merchant_url is required")
 
@@ -325,6 +321,7 @@ class McpGateway:
             ucp_client = UcpRestClient(
                 merchant.ucp_base_url,
                 ucp_agent=self._settings.gateway_agent_name,
+                merchant_api_key=merchant.inbound_api_key,
             )
 
             orchestrator = CompleteCheckoutOrchestrator(self._supabase, self._settings)

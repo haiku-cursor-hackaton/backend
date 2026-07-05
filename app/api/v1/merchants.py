@@ -17,6 +17,11 @@ class RegisterMerchantRequest(BaseModel):
     name: str = Field(..., min_length=1)
     category: str | None = None
     root_url: str = Field(..., min_length=1)
+    ucp_inbound_api_key: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Vendor API key Genko sends when calling this merchant's UCP REST API.",
+    )
 
 
 def _get_registration_service(
@@ -47,6 +52,7 @@ async def register_merchant(
             name=body.name,
             category=body.category,
             root_url=body.root_url,
+            ucp_inbound_api_key=body.ucp_inbound_api_key,
         )
     except MerchantRegistrationError as exc:
         raise HTTPException(status_code=400, detail=exc.message) from exc

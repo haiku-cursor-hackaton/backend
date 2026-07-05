@@ -224,3 +224,29 @@ def test_merchant_registration_service_register() -> None:
         ]
 
     asyncio.run(run())
+
+
+def test_merchant_registration_stores_inbound_api_key() -> None:
+    async def run() -> None:
+        fake = FakeSupabase()
+        service = MerchantRegistrationService(fake)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=SAMPLE_UCP_PROFILE)
+
+        transport = httpx.MockTransport(handler)
+        http_client = httpx.AsyncClient(transport=transport)
+
+        await service.register(
+            owner_id="owner-1",
+            name="Lithe",
+            category="retail",
+            root_url="https://store.example.com/",
+            ucp_inbound_api_key="gateway-vendor-key",
+            http_client=http_client,
+        )
+
+        business_call = fake.insert_calls[0]
+        assert business_call[1]["encrypted_ucp_api_key"] == "gateway-vendor-key"
+
+    asyncio.run(run())

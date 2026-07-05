@@ -23,6 +23,22 @@ uvicorn app.main:app --reload
 
 The API listens on `http://127.0.0.1:8000` by default.
 
+## Merchant registration (Lithe / protected UCP)
+
+When a merchant requires inbound auth (for example Lithe with `UCP_GATEWAY_API_KEY`), register it with the same vendor key Genko must send on outbound UCP REST calls:
+
+```powershell
+# POST /v1/merchants/register (Supabase JWT bearer)
+# Body:
+# {
+#   "name": "Lithe",
+#   "root_url": "https://lithe-production.up.railway.app",
+#   "ucp_inbound_api_key": "<same value as Lithe UCP_GATEWAY_API_KEY>"
+# }
+```
+
+Genko stores the key in `businesses.encrypted_ucp_api_key` and sends `Authorization: Bearer ...` on every `UcpRestClient` call. Configure Lithe with the returned `sdk_api_key` as `UCP_PLATFORM_API_KEY`.
+
 ## Health check
 
 ```powershell

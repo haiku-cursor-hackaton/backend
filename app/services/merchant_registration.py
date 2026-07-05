@@ -89,6 +89,7 @@ class MerchantRegistrationService:
         name: str,
         category: str | None,
         root_url: str,
+        ucp_inbound_api_key: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> dict[str, Any]:
         normalized_root = normalize_root_url(root_url)
@@ -113,18 +114,19 @@ class MerchantRegistrationService:
         ucp_base_url = extract_rest_endpoint(profile)
         capabilities = extract_capabilities(profile)
 
-        business_result = await self._supabase.insert(
-            "businesses",
-            {
-                "owner_id": owner_id,
-                "name": name,
-                "category": category,
-                "status": "active",
-                "well_known_url": discovery_url,
-                "ucp_base_url": ucp_base_url,
-                "ucp_capabilities": capabilities,
-            },
-        )
+        business_payload: dict[str, Any] = {
+            "owner_id": owner_id,
+            "name": name,
+            "category": category,
+            "status": "active",
+            "well_known_url": discovery_url,
+            "ucp_base_url": ucp_base_url,
+            "ucp_capabilities": capabilities,
+        }
+        if ucp_inbound_api_key:
+            business_payload["encrypted_ucp_api_key"] = ucp_inbound_api_key.strip()
+
+        business_result = await self._supabase.insert("businesses", business_payload)
         business_row = _first_row(business_result)
         if business_row is None:
             raise MerchantRegistrationError("Business insert did not return a row")

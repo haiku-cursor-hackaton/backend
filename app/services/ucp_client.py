@@ -14,6 +14,7 @@ class UcpRestClient:
         ucp_agent: str | None = None,
         request_id: str | None = None,
         idempotency_key: str | None = None,
+        merchant_api_key: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._owns_client = client is None
@@ -21,6 +22,7 @@ class UcpRestClient:
         self._default_ucp_agent = ucp_agent
         self._default_request_id = request_id
         self._default_idempotency_key = idempotency_key
+        self._merchant_api_key = merchant_api_key
 
     async def close(self) -> None:
         if self._owns_client:
@@ -43,6 +45,8 @@ class UcpRestClient:
             headers["Request-Id"] = req_id
         if idem_key:
             headers["Idempotency-Key"] = idem_key
+        if self._merchant_api_key:
+            headers["Authorization"] = f"Bearer {self._merchant_api_key}"
         return headers
 
     async def _json_response(self, response: httpx.Response) -> Any:

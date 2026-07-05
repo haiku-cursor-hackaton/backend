@@ -25,6 +25,27 @@ class ResolvedMerchant:
     ucp_base_url: str
     ucp_capabilities: dict[str, Any]
     raw: dict[str, Any]
+    inbound_api_key: str | None = None
+
+
+def merchant_from_business_row(row: dict[str, Any]) -> ResolvedMerchant:
+    ucp_base_url = row.get("ucp_base_url")
+    if not ucp_base_url:
+        raise MerchantResolutionError("Merchant missing UCP base URL")
+    return ResolvedMerchant(
+        business_id=str(row["id"]),
+        ucp_base_url=str(ucp_base_url).rstrip("/"),
+        ucp_capabilities=_coerce_capabilities(row.get("ucp_capabilities")),
+        inbound_api_key=_coerce_optional_str(row.get("encrypted_ucp_api_key")),
+        raw=row,
+    )
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _first_row(result: Any) -> dict[str, Any] | None:
@@ -55,31 +76,27 @@ async def resolve_merchant(supabase: SupabaseClient, merchant_url: str) -> Resol
     if not business_id:
         raise MerchantResolutionError(f"Merchant resolution missing business id for domain: {domain}")
 
-    ucp_base_url = row.get("ucp_base_url")
-    ucp_capabilities = _coerce_capabilities(row.get("ucp_capabilities"))
-
-    if not ucp_base_url:
-        business = _first_row(
-            await supabase.select(
-                "businesses",
-                query={"id": f"eq.{business_id}", "select": "id,ucp_base_url,ucp_capabilities"},
-            )
+    business = _first_row(
+        await supabase.select(
+            "businesses",
+            query={
+                "id": f"eq.{business_id}",
+                "select": "id,ucp_base_url,ucp_capabilities,encrypted_ucp_api_key",
+            },
         )
-        if business is None:
-            raise MerchantResolutionError(f"Business not found: {business_id}")
-        ucp_base_url = business.get("ucp_base_url")
-        if not ucp_capabilities:
-            ucp_capabilities = _coerce_capabilities(business.get("ucp_capabilities"))
-
-    if not ucp_base_url:
-        raise MerchantResolutionError(f"Merchant missing UCP base URL for domain: {domain}")
-
-    return ResolvedMerchant(
-        business_id=str(business_id),
-        ucp_base_url=str(ucp_base_url).rstrip("/"),
-        ucp_capabilities=ucp_capabilities,
-        raw=row,
     )
+    if business is None:
+        raise MerchantResolutionError(f"Business not found: {business_id}")
+
+    if not business.get("ucp_base_url") and row.get("ucp_base_url"):
+        business = {**business, "ucp_base_url": row.get("ucp_base_url")}
+    if not business.get("ucp_capabilities") and row.get("ucp_capabilities"):
+        business = {
+            **business,
+            "ucp_capabilities": row.get("ucp_capabilities"),
+        }
+
+    return merchant_from_business_row(business)
 
 
 def ensure_capability(merchant: ResolvedMerchant, capability: str) -> None:

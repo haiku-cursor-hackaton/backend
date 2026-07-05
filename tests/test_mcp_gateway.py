@@ -39,6 +39,21 @@ class FakeSupabase:
     async def select(self, table: str, *, query: dict[str, str] | None = None) -> Any:
         if table == "checkout_sessions":
             return self.checkouts[:1]
+        if table == "businesses":
+            return [
+                {
+                    "id": "biz-1",
+                    "ucp_base_url": "https://merchant.example",
+                    "ucp_capabilities": {
+                        "dev.ucp.shopping.catalog.search": [{}],
+                        "dev.ucp.shopping.catalog.lookup": [{}],
+                        "dev.ucp.shopping.catalog.product": [{}],
+                        "dev.ucp.shopping.checkout": [{}],
+                        "dev.ucp.shopping.order": [{}],
+                    },
+                    "encrypted_ucp_api_key": None,
+                }
+            ]
         return []
 
     async def insert(self, table: str, payload: dict) -> Any:

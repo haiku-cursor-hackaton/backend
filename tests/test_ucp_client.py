@@ -101,6 +101,48 @@ def test_ucp_rest_client_all_operations() -> None:
     asyncio.run(run())
 
 
+def test_ucp_rest_client_sends_merchant_authorization() -> None:
+    async def run() -> None:
+        captured: dict[str, str | None] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["authorization"] = request.headers.get("authorization")
+            return httpx.Response(200, json={"products": []})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(base_url=BASE_URL, transport=transport)
+        ucp = UcpRestClient(BASE_URL, client=client, merchant_api_key="vendor-secret-key")
+
+        await ucp.search_catalog({})
+
+        assert captured["authorization"] == "Bearer vendor-secret-key"
+
+        await ucp.close()
+
+    asyncio.run(run())
+
+
+def test_ucp_rest_client_omits_authorization_without_merchant_key() -> None:
+    async def run() -> None:
+        captured: dict[str, str | None] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["authorization"] = request.headers.get("authorization")
+            return httpx.Response(200, json={"products": []})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(base_url=BASE_URL, transport=transport)
+        ucp = UcpRestClient(BASE_URL, client=client)
+
+        await ucp.search_catalog({})
+
+        assert captured["authorization"] is None
+
+        await ucp.close()
+
+    asyncio.run(run())
+
+
 def test_ucp_rest_client_raises_on_non_2xx() -> None:
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
