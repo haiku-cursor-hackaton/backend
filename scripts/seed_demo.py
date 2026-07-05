@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -9,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -21,6 +23,7 @@ from app.services.key_issuer import issue_api_key
 from app.services.merchant_registration import (
     MerchantRegistrationError,
     MerchantRegistrationService,
+    domain_from_url,
     extract_capabilities,
     extract_rest_endpoint,
     normalize_root_url,
@@ -82,6 +85,25 @@ def plan_seed_actions(manifest: dict[str, Any]) -> list[str]:
     ]
 
 
+def apply_runtime_overrides(
+    manifest: dict[str, Any],
+    *,
+    merchant_url: str | None = None,
+) -> dict[str, Any]:
+    updated = copy.deepcopy(manifest)
+    if not merchant_url:
+        return updated
+
+    root_url = normalize_root_url(merchant_url)
+    hostname = domain_from_url(root_url)
+    business = updated.setdefault("business", {})
+    business["root_url"] = root_url
+    business["well_known_url"] = well_known_url(root_url)
+    business["ucp_base_url"] = f"{root_url}/ucp/v1"
+    business["domain"] = hostname.lower()
+    return updated
+
+
 async def revoke_demo_seed_keys(
     supabase: SupabaseClient,
     *,
@@ -109,6 +131,84 @@ async def revoke_demo_seed_keys(
         query=query,
     )
     return len(rows)
+
+
+async def reset_demo_wallet_state(
+    supabase: SupabaseClient,
+    *,
+    profile_id: str,
+    business_id: str,
+    wallet_spec: dict[str, Any],
+) -> int:
+    checkout_rows = await supabase.select(
+        "checkout_sessions",
+        query={
+            "profile_id": f"eq.{profile_id}",
+            "business_id": f"eq.{business_id}",
+            "select": "id",
+            "limit": "100",
+        },
+    )
+    checkout_ids = [
+        str(row["id"])
+        for row in checkout_rows
+        if isinstance(row, dict) and row.get("id")
+    ]
+
+    released = 0
+    for checkout_id in checkout_ids:
+        payment_rows = await supabase.select(
+            "payments",
+            query={
+                "checkout_session_id": f"eq.{checkout_id}",
+                "status": "in.(reserved,submitted)",
+                "select": "id,status",
+                "limit": "100",
+            },
+        )
+        for payment in payment_rows if isinstance(payment_rows, list) else []:
+            payment_id = payment.get("id") if isinstance(payment, dict) else None
+            if not payment_id:
+                continue
+            try:
+                await supabase.rpc("release_checkout_payment", {"p_payment_id": payment_id})
+            except Exception:
+                # Older or already-reconciled demo rows should not block reseeding.
+                pass
+            released += 1
+
+    wallet_rows = await supabase.select(
+        "wallets",
+        query={
+            "profile_id": f"eq.{profile_id}",
+            "currency": f"eq.{wallet_spec['currency']}",
+            "select": "id",
+            "limit": "1",
+        },
+    )
+    wallet_row = _first_row(wallet_rows)
+    if wallet_row is not None and wallet_row.get("id"):
+        await supabase.update(
+            "wallets",
+            {
+                "available_minor": wallet_spec["available_minor"],
+                "reserved_minor": wallet_spec["reserved_minor"],
+            },
+            query={"id": f"eq.{wallet_row['id']}"},
+        )
+    else:
+        await supabase.upsert(
+            "wallets",
+            {
+                "profile_id": profile_id,
+                "currency": wallet_spec["currency"],
+                "available_minor": wallet_spec["available_minor"],
+                "reserved_minor": wallet_spec["reserved_minor"],
+            },
+            on_conflict="profile_id",
+        )
+
+    return released
 
 
 class AdminAuthClient:
@@ -300,22 +400,19 @@ class DemoSeeder:
         )
         self._upsert_calls += 1
 
-        await self._supabase.upsert(
-            "wallets",
-            {
-                "profile_id": client_id,
-                "currency": wallet_spec["currency"],
-                "available_minor": wallet_spec["available_minor"],
-                "reserved_minor": wallet_spec["reserved_minor"],
-            },
-            on_conflict="profile_id",
-        )
-        self._upsert_calls += 1
-
         business_id, merchant_url = await self._ensure_demo_business(
             owner_id=owner_id,
             business_spec=business_spec,
         )
+
+        released_payments = await reset_demo_wallet_state(
+            self._supabase,
+            profile_id=client_id,
+            business_id=business_id,
+            wallet_spec=wallet_spec,
+        )
+        self._update_calls += 1
+        self._update_calls += released_payments
 
         await revoke_demo_seed_keys(self._supabase, label=label, profile_id=client_id)
         self._update_calls += 1
@@ -590,6 +687,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_OUTPUT,
         help=f"Credentials output path (default: {DEFAULT_OUTPUT}).",
     )
+    parser.add_argument(
+        "--backend-url",
+        help="Override backend PUBLIC_BASE_URL for generated credentials.",
+    )
+    parser.add_argument(
+        "--merchant-url",
+        help="Override demo merchant root URL and derived discovery endpoints.",
+    )
     return parser.parse_args(argv)
 
 
@@ -610,7 +715,10 @@ async def main_async(argv: list[str] | None = None) -> int:
     output_path = args.output if args.output.is_absolute() else _BACKEND_ROOT / args.output
 
     try:
-        manifest = load_manifest(manifest_path)
+        manifest = apply_runtime_overrides(
+            load_manifest(manifest_path),
+            merchant_url=args.merchant_url,
+        )
     except Exception as exc:
         print(f"Failed to load manifest: {exc}", file=sys.stderr)
         return 1
@@ -632,6 +740,7 @@ async def main_async(argv: list[str] | None = None) -> int:
             output_path=output_path,
             supabase_url=supabase_url,
             service_role_key=service_role_key,
+            backend_url=args.backend_url,
             admin_client=admin_client,
             supabase=supabase,
         )

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
+
 from app.config import Settings
 from app.services.merchant_resolver import ResolvedMerchant
 from app.services.wallet_orchestrator import (
@@ -104,6 +106,35 @@ class FakeSupabase:
         if table == "checkout_sessions":
             self.checkout_row = row
         return [row]
+
+
+class ReserveRaisesFakeSupabase(FakeSupabase):
+    async def rpc(self, name: str, payload: dict | None = None) -> Any:
+        self.rpc_calls.append((name, payload))
+        if name == "reserve_checkout_payment":
+            request = httpx.Request("POST", "https://example.supabase.co/rest/v1/rpc/reserve_checkout_payment")
+            response = httpx.Response(
+                400,
+                request=request,
+                json={"message": "insufficient_platform_balance"},
+            )
+            raise httpx.HTTPStatusError("bad request", request=request, response=response)
+        if name == "mark_payment_submitted":
+            return {"payment_id": payload.get("p_payment_id") if payload else None}
+        if name == "release_checkout_payment":
+            return {"payment_id": payload.get("p_payment_id") if payload else None}
+        return {}
+
+    async def select(self, table: str, *, query: dict[str, str] | None = None) -> Any:
+        if table == "payments":
+            return [
+                {
+                    "id": PAYMENT_ID,
+                    "checkout_session_id": CHECKOUT_ROW_ID,
+                    "status": "reserved",
+                }
+            ]
+        return await super().select(table, query=query)
 
 
 def _merchant() -> ResolvedMerchant:
@@ -210,3 +241,126 @@ def test_complete_reserves_submits_and_passes_payment_reference() -> None:
 
     order_inserts = [call for call in supabase.insert_calls if call[0] == "orders"]
     assert len(order_inserts) == 1
+
+
+def test_complete_uses_reserved_payment_when_rpc_returns_http_400_but_row_exists() -> None:
+    async def run() -> tuple[dict[str, Any], ReserveRaisesFakeSupabase, FakeUcpClient]:
+        supabase = ReserveRaisesFakeSupabase()
+        ucp = FakeUcpClient(
+            checkout={
+                "id": EXTERNAL_CHECKOUT_ID,
+                "status": "ready_for_complete",
+                "currency": "USD",
+                "totals": [{"type": "total", "amount": 1500}],
+            },
+            complete_response={
+                "id": EXTERNAL_CHECKOUT_ID,
+                "status": "completed",
+                "order": {"id": "order-99", "status": "created"},
+            },
+        )
+        orchestrator = CompleteCheckoutOrchestrator(supabase, _settings())
+        payload = await orchestrator.complete(
+            ucp_client=ucp,
+            merchant=_merchant(),
+            profile_id=PROFILE_ID,
+            external_checkout_id=EXTERNAL_CHECKOUT_ID,
+        )
+        return payload, supabase, ucp
+
+    payload, supabase, ucp = asyncio.run(run())
+
+    assert payload["status"] == "completed"
+    assert supabase.rpc_calls[0][0] == "reserve_checkout_payment"
+    assert supabase.rpc_calls[1] == ("mark_payment_submitted", {"p_payment_id": PAYMENT_ID})
+    instrument = ucp.complete_payload["payment"]["instruments"][0]
+    assert instrument["credential"]["reference"] == PAYMENT_ID
+
+
+def test_complete_accepts_string_payment_id_from_reserve_rpc() -> None:
+    class StringReserveSupabase(FakeSupabase):
+        async def rpc(self, name: str, payload: dict | None = None) -> Any:
+            self.rpc_calls.append((name, payload))
+            if name == "reserve_checkout_payment":
+                return PAYMENT_ID
+            if name == "mark_payment_submitted":
+                return {"payment_id": payload.get("p_payment_id") if payload else None}
+            return {}
+
+    async def run() -> tuple[dict[str, Any], StringReserveSupabase, FakeUcpClient]:
+        supabase = StringReserveSupabase()
+        ucp = FakeUcpClient(
+            checkout={
+                "id": EXTERNAL_CHECKOUT_ID,
+                "status": "ready_for_complete",
+                "currency": "USD",
+                "totals": [{"type": "total", "amount": 1500}],
+            },
+            complete_response={
+                "id": EXTERNAL_CHECKOUT_ID,
+                "status": "completed",
+                "order": {"id": "order-99", "status": "created"},
+            },
+        )
+        orchestrator = CompleteCheckoutOrchestrator(supabase, _settings())
+        payload = await orchestrator.complete(
+            ucp_client=ucp,
+            merchant=_merchant(),
+            profile_id=PROFILE_ID,
+            external_checkout_id=EXTERNAL_CHECKOUT_ID,
+        )
+        return payload, supabase, ucp
+
+    payload, supabase, ucp = asyncio.run(run())
+
+    assert payload["status"] == "completed"
+    assert supabase.rpc_calls[1] == ("mark_payment_submitted", {"p_payment_id": PAYMENT_ID})
+    instrument = ucp.complete_payload["payment"]["instruments"][0]
+    assert instrument["credential"]["reference"] == PAYMENT_ID
+
+
+def test_complete_loads_reserved_payment_when_reserve_rpc_returns_empty_payload() -> None:
+    class EmptyReserveSupabase(FakeSupabase):
+        async def rpc(self, name: str, payload: dict | None = None) -> Any:
+            self.rpc_calls.append((name, payload))
+            if name == "reserve_checkout_payment":
+                return {}
+            if name == "mark_payment_submitted":
+                return {"payment_id": payload.get("p_payment_id") if payload else None}
+            return {}
+
+        async def select(self, table: str, *, query: dict[str, str] | None = None) -> Any:
+            if table == "payments":
+                return [{"id": PAYMENT_ID, "status": "reserved"}]
+            return await super().select(table, query=query)
+
+    async def run() -> tuple[dict[str, Any], EmptyReserveSupabase, FakeUcpClient]:
+        supabase = EmptyReserveSupabase()
+        ucp = FakeUcpClient(
+            checkout={
+                "id": EXTERNAL_CHECKOUT_ID,
+                "status": "ready_for_complete",
+                "currency": "USD",
+                "totals": [{"type": "total", "amount": 1500}],
+            },
+            complete_response={
+                "id": EXTERNAL_CHECKOUT_ID,
+                "status": "completed",
+                "order": {"id": "order-99", "status": "created"},
+            },
+        )
+        orchestrator = CompleteCheckoutOrchestrator(supabase, _settings())
+        payload = await orchestrator.complete(
+            ucp_client=ucp,
+            merchant=_merchant(),
+            profile_id=PROFILE_ID,
+            external_checkout_id=EXTERNAL_CHECKOUT_ID,
+        )
+        return payload, supabase, ucp
+
+    payload, supabase, ucp = asyncio.run(run())
+
+    assert payload["status"] == "completed"
+    assert supabase.rpc_calls[1] == ("mark_payment_submitted", {"p_payment_id": PAYMENT_ID})
+    instrument = ucp.complete_payload["payment"]["instruments"][0]
+    assert instrument["credential"]["reference"] == PAYMENT_ID

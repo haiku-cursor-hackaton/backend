@@ -13,14 +13,14 @@
   },
   "business": {
     "name": "[DEMO] Demo Store",
-    "root_url": "http://127.0.0.1:8100",
-    "well_known_url": "http://127.0.0.1:8100/.well-known/ucp",
-    "ucp_base_url": "http://127.0.0.1:8100/ucp/v1",
+    "root_url": "http://127.0.0.1:8111",
+    "well_known_url": "http://127.0.0.1:8111/.well-known/ucp",
+    "ucp_base_url": "http://127.0.0.1:8111/ucp/v1",
     "category": "apparel",
     "domain": "127.0.0.1"
   },
   "wallet": {
-    "available_minor": 1500,
+    "available_minor": 2000,
     "currency": "USD",
     "reserved_minor": 0
   },

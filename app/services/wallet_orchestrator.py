@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 
@@ -24,6 +25,8 @@ def _first_row(result: Any) -> dict[str, Any] | None:
 
 
 def _extract_payment_id(result: Any) -> str | None:
+    if isinstance(result, str) and result:
+        return result
     row = _first_row(result)
     if row is None:
         return None
@@ -31,6 +34,46 @@ def _extract_payment_id(result: Any) -> str | None:
         value = row.get(key)
         if value is not None:
             return str(value)
+    return None
+
+
+def _extract_http_error_message(error: httpx.HTTPStatusError) -> str:
+    try:
+        payload = error.response.json()
+    except Exception:
+        return error.response.text or str(error)
+    if isinstance(payload, dict):
+        for key in ("message", "detail", "code"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+    return str(payload)
+
+
+async def _load_reserved_payment_id(
+    supabase: SupabaseClient,
+    *,
+    checkout_row_id: str,
+    idem_hash: str,
+    attempts: int = 3,
+    delay_seconds: float = 0.05,
+) -> str | None:
+    for attempt in range(attempts):
+        payment_row = _first_row(
+            await supabase.select(
+                "payments",
+                query={
+                    "checkout_session_id": f"eq.{checkout_row_id}",
+                    "idempotency_key_hash": f"eq.{idem_hash}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        )
+        if payment_row and payment_row.get("id"):
+            return str(payment_row["id"])
+        if attempt + 1 < attempts:
+            await asyncio.sleep(delay_seconds)
     return None
 
 
@@ -155,14 +198,41 @@ class CompleteCheckoutOrchestrator:
             }
 
         idem_hash = _idempotency_hash(profile_id, str(checkout_row_id), external_checkout_id)
-        reserve_result = await self._supabase.rpc(
-            "reserve_checkout_payment",
-            {
-                "p_checkout_session_id": checkout_row_id,
-                "p_idempotency_key_hash": idem_hash,
-            },
-        )
-        payment_id = _extract_payment_id(reserve_result)
+        try:
+            reserve_result = await self._supabase.rpc(
+                "reserve_checkout_payment",
+                {
+                    "p_checkout_session_id": checkout_row_id,
+                    "p_idempotency_key_hash": idem_hash,
+                },
+            )
+            payment_id = await _load_reserved_payment_id(
+                self._supabase,
+                checkout_row_id=str(checkout_row_id),
+                idem_hash=idem_hash,
+            )
+            if payment_id is None:
+                payment_id = _extract_payment_id(reserve_result)
+        except httpx.HTTPStatusError as exc:
+            payment_id = await _load_reserved_payment_id(
+                self._supabase,
+                checkout_row_id=str(checkout_row_id),
+                idem_hash=idem_hash,
+            )
+            if payment_id is None:
+                message = _extract_http_error_message(exc)
+                if "insufficient_platform_balance" in message:
+                    return build_insufficient_balance_error(total_minor, currency)
+                return {
+                    "ucp": {"status": "error"},
+                    "messages": [
+                        {
+                            "code": "payment_reserve_failed",
+                            "severity": "recoverable",
+                            "content": "Failed to reserve checkout payment.",
+                        }
+                    ],
+                }
         if payment_id is None:
             return {
                 "ucp": {"status": "error"},
