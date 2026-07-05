@@ -11,6 +11,7 @@ from app.auth.scopes import (
     CHECKOUT_WRITE,
     ORDER_READ,
     PURCHASE_EXECUTE,
+    WALLET_READ,
     require_scope,
 )
 from app.config import Settings, get_settings
@@ -28,6 +29,7 @@ from app.services.merchant_resolver import (
 )
 from app.services.ucp_client import UcpRestClient
 from app.services.usage_events import record_usage_event
+from app.services.user_profile import get_user_profile
 from app.services.wallet_orchestrator import CompleteCheckoutOrchestrator
 
 JSONRPC_VERSION = "2.0"
@@ -38,6 +40,7 @@ CAPABILITY_CHECKOUT = "dev.ucp.shopping.checkout"
 CAPABILITY_ORDER = "dev.ucp.shopping.order"
 
 TOOL_SCOPES: dict[str, str] = {
+    "get_user_profile": WALLET_READ,
     "search_catalog": CATALOG_READ,
     "lookup_catalog": CATALOG_READ,
     "get_product": CATALOG_READ,
@@ -109,6 +112,14 @@ def _tool_defs() -> list[dict[str, Any]]:
     merchant_optional = {"merchant_url": _MERCHANT_URL_SCHEMA}
 
     return [
+        {
+            "name": "get_user_profile",
+            "description": "Return the signed-in client's non-sensitive profile and wallet balance.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+            },
+        },
         {
             "name": "search_catalog",
             "description": "Search the merchant catalog (UCP catalog search).",
@@ -307,11 +318,24 @@ class McpGateway:
 
         require_scope(self._context, TOOL_SCOPES[tool_name])
 
+        profile_id = self._context.profile_id or "unknown"
+
+        if tool_name == "get_user_profile":
+            payload = await get_user_profile(self._supabase, self._context)
+            await record_usage_event(
+                self._supabase,
+                operation=tool_name,
+                transport="mcp",
+                status="success",
+                profile_id=profile_id,
+                api_key_id=self._context.api_key_id,
+            )
+            return payload
+
         if tool_name in {"search_catalog", "lookup_catalog", "get_product", "create_checkout", "get_order"}:
             if not args.get("merchant_url"):
                 raise ValueError("merchant_url is required")
 
-        profile_id = self._context.profile_id or "unknown"
         merchant: ResolvedMerchant | None = None
         ucp_client: UcpRestClient | None = None
 

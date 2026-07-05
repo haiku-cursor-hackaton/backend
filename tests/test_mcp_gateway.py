@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth.api_keys import ApiKeyContext
-from app.auth.scopes import CATALOG_READ, CHECKOUT_WRITE, PURCHASE_EXECUTE
+from app.auth.scopes import CATALOG_READ, CHECKOUT_WRITE, PURCHASE_EXECUTE, WALLET_READ
 from app.config import Settings, get_settings
 from app.dependencies import get_current_mcp_context, get_supabase_client
 from app.main import app
@@ -54,6 +54,10 @@ class FakeSupabase:
                     "encrypted_ucp_api_key": None,
                 }
             ]
+        if table == "profiles":
+            return [{"full_name": "Demo Client", "account_type": "client"}]
+        if table == "wallets":
+            return [{"available_minor": 10000, "reserved_minor": 0, "currency": "USD"}]
         return []
 
     async def insert(self, table: str, payload: dict) -> Any:
@@ -133,12 +137,13 @@ def test_mcp_initialize(mcp_client: TestClient) -> None:
     assert result["serverInfo"] == {"name": "genko", "version": "0.1.0"}
 
 
-def test_mcp_tools_list_returns_nine_public_tools(mcp_client: TestClient) -> None:
+def test_mcp_tools_list_returns_ten_public_tools(mcp_client: TestClient) -> None:
     response = mcp_client.post("/mcp", json=_rpc("tools/list"), headers={"Authorization": f"Bearer {API_KEY}"})
     assert response.status_code == 200
     tools = response.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
     assert names == {
+        "get_user_profile",
         "search_catalog",
         "lookup_catalog",
         "get_product",
@@ -148,6 +153,29 @@ def test_mcp_tools_list_returns_nine_public_tools(mcp_client: TestClient) -> Non
         "complete_checkout",
         "cancel_checkout",
         "get_order",
+    }
+
+
+def test_mcp_get_user_profile_returns_profile_and_wallet(mcp_client: TestClient) -> None:
+    app.dependency_overrides[get_current_mcp_context] = lambda: ApiKeyContext(
+        api_key_id="key-1",
+        profile_id="profile-1",
+        scopes=[WALLET_READ],
+        raw={"email": "buyer@example.com"},
+    )
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc("tools/call", {"name": "get_user_profile", "arguments": {}}),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()["result"]["structuredContent"]
+    assert payload["full_name"] == "Demo Client"
+    assert payload["email"] == "buyer@example.com"
+    assert payload["wallet"] == {
+        "currency": "USD",
+        "available_minor": 10000,
+        "reserved_minor": 0,
     }
 
 
