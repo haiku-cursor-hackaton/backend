@@ -82,6 +82,125 @@ class MerchantRegistrationService:
     def __init__(self, supabase: SupabaseClient) -> None:
         self._supabase = supabase
 
+    async def bootstrap_pending(
+        self,
+        *,
+        owner_id: str,
+        name: str,
+        category: str | None,
+    ) -> dict[str, Any]:
+        business_result = await self._supabase.insert(
+            "businesses",
+            {
+                "owner_id": owner_id,
+                "name": name,
+                "category": category,
+                "status": "pending",
+                "well_known_url": None,
+                "ucp_capabilities": {},
+            },
+        )
+        business_row = _first_row(business_result)
+        if business_row is None:
+            raise MerchantRegistrationError("Business insert did not return a row")
+        business_id = _require_row_id(business_row, "Business")
+
+        sdk_key = await issue_api_key(
+            self._supabase,
+            "sdk",
+            business_id=business_id,
+            scopes=["payment:verify", "payment:accredit", "payment:release"],
+            label=f"{name} SDK key",
+        )
+
+        return {
+            "business_id": business_id,
+            "status": "pending",
+            "sdk_api_key": sdk_key.plaintext,
+            "sdk_api_key_prefix": sdk_key.key_prefix,
+        }
+
+    async def link_url(
+        self,
+        *,
+        owner_id: str,
+        business_id: str,
+        root_url: str,
+        ucp_inbound_api_key: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> dict[str, Any]:
+        business_row = _first_row(
+            await self._supabase.select(
+                "businesses",
+                query={
+                    "id": f"eq.{business_id}",
+                    "select": "id,owner_id",
+                    "limit": "1",
+                },
+            )
+        )
+        if business_row is None:
+            raise MerchantRegistrationError("Business not found")
+        if str(business_row.get("owner_id")) != owner_id:
+            raise MerchantRegistrationError("Business does not belong to caller")
+
+        normalized_root = normalize_root_url(root_url)
+        discovery_url = well_known_url(normalized_root)
+        domain = domain_from_url(normalized_root)
+
+        owns_client = http_client is None
+        client = http_client or httpx.AsyncClient()
+        try:
+            response = await client.get(discovery_url)
+            response.raise_for_status()
+            profile = response.json()
+        except httpx.HTTPError as exc:
+            raise MerchantRegistrationError(f"Failed to fetch UCP profile: {exc}") from exc
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        if not isinstance(profile, dict):
+            raise MerchantRegistrationError("UCP profile response is not a JSON object")
+
+        ucp_base_url = extract_rest_endpoint(profile)
+        capabilities = extract_capabilities(profile)
+
+        updates: dict[str, Any] = {
+            "status": "active",
+            "well_known_url": discovery_url,
+            "ucp_base_url": ucp_base_url,
+            "ucp_capabilities": capabilities,
+        }
+        if ucp_inbound_api_key:
+            updates["encrypted_ucp_api_key"] = ucp_inbound_api_key.strip()
+
+        await self._supabase.update(
+            "businesses",
+            updates,
+            query={"id": f"eq.{business_id}"},
+        )
+
+        await self._supabase.upsert(
+            "merchant_domains",
+            {
+                "business_id": business_id,
+                "domain": domain,
+                "verified": True,
+            },
+            on_conflict="domain",
+        )
+
+        return {
+            "business_id": business_id,
+            "root_url": normalized_root,
+            "well_known_url": discovery_url,
+            "ucp_base_url": ucp_base_url,
+            "domain": domain,
+            "capabilities": capabilities,
+            "status": "active",
+        }
+
     async def register(
         self,
         *,

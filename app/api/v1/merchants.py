@@ -24,6 +24,11 @@ class RegisterMerchantRequest(BaseModel):
     )
 
 
+class LinkMerchantRequest(BaseModel):
+    root_url: str = Field(..., min_length=1)
+    ucp_inbound_api_key: str | None = Field(default=None, min_length=1)
+
+
 def _get_registration_service(
     supabase: SupabaseClient = Depends(get_supabase_client),
 ) -> MerchantRegistrationService:
@@ -51,6 +56,24 @@ async def register_merchant(
             owner_id=user.id,
             name=body.name,
             category=body.category,
+            root_url=body.root_url,
+            ucp_inbound_api_key=body.ucp_inbound_api_key,
+        )
+    except MerchantRegistrationError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+
+
+@router.post("/{business_id}/link")
+async def link_merchant(
+    business_id: str,
+    body: LinkMerchantRequest,
+    user: Annotated[DashboardUser, Depends(get_current_dashboard_user)],
+    service: Annotated[MerchantRegistrationService, Depends(_get_registration_service)],
+) -> dict:
+    try:
+        return await service.link_url(
+            owner_id=user.id,
+            business_id=business_id,
             root_url=body.root_url,
             ucp_inbound_api_key=body.ucp_inbound_api_key,
         )
