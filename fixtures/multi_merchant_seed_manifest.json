@@ -79,6 +79,59 @@
           "note": "Vinyl sticker pack"
         }
       ]
+    },
+    {
+      "slug": "basics",
+      "name": "Genko Basics",
+      "category": "apparel",
+      "root_url": "https://genko-basics-production.up.railway.app",
+      "owner": {
+        "email": "basics-merchant@example.com",
+        "full_name": "Genko Basics Owner",
+        "account_type": "business"
+      },
+      "vendor_api_key": "gk_vendor_basics_7f3a9c2e1b5846d0a5e8f1c3b7d9e2a4",
+      "sample_products": [
+        {
+          "id": "tee-heather-grey-m",
+          "search_query": "grey tee",
+          "note": "Heather grey tee"
+        },
+        {
+          "id": "hoodie-charcoal-xl",
+          "search_query": "hoodie",
+          "note": "Charcoal hoodie"
+        }
+      ]
+    },
+    {
+      "slug": "pantry",
+      "name": "Genko Pantry",
+      "category": "food",
+      "root_url": "https://genko-pantry-production.up.railway.app",
+      "owner": {
+        "email": "pantry-merchant@example.com",
+        "full_name": "Genko Pantry Owner",
+        "account_type": "business"
+      },
+      "vendor_api_key": "gk_vendor_pantry_4d8e1f6a9b3c5e7f2a0d4b8c6e1f3a9",
+      "sample_products": [
+        {
+          "id": "coffee-beans-12oz",
+          "search_query": "coffee",
+          "note": "Whole bean coffee"
+        },
+        {
+          "id": "honey-jar-8oz",
+          "search_query": "honey",
+          "note": "Wildflower honey"
+        },
+        {
+          "id": "hot-sauce-trio",
+          "search_query": "hot sauce",
+          "note": "Hot sauce set"
+        }
+      ]
     }
   ]
 }
