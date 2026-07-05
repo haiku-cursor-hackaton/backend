@@ -19,6 +19,7 @@ from app.db.supabase import SupabaseClient
 from app.dependencies import get_current_mcp_context, get_supabase_client
 from app.services.buyer import buyer_from_context, merge_buyer
 from app.services.checkout_store import find_checkout, upsert_checkout_from_ucp
+from app.services.commerce_discovery import discover_commerces
 from app.services.merchant_resolver import (
     CapabilityError,
     MerchantResolutionError,
@@ -29,6 +30,7 @@ from app.services.merchant_resolver import (
 )
 from app.services.ucp_client import UcpRestClient
 from app.services.usage_events import record_usage_event
+from app.services.purchase_history import get_purchase_history
 from app.services.user_profile import get_user_profile
 from app.services.wallet_orchestrator import CompleteCheckoutOrchestrator
 
@@ -41,6 +43,7 @@ CAPABILITY_ORDER = "dev.ucp.shopping.order"
 
 TOOL_SCOPES: dict[str, str] = {
     "get_user_profile": WALLET_READ,
+    "discover_commerces": CATALOG_READ,
     "search_catalog": CATALOG_READ,
     "lookup_catalog": CATALOG_READ,
     "get_product": CATALOG_READ,
@@ -50,6 +53,7 @@ TOOL_SCOPES: dict[str, str] = {
     "cancel_checkout": CHECKOUT_WRITE,
     "complete_checkout": PURCHASE_EXECUTE,
     "get_order": ORDER_READ,
+    "get_purchase_history": ORDER_READ,
 }
 
 TOOL_CAPABILITIES: dict[str, str] = {
@@ -105,6 +109,28 @@ _CATALOG_PAGINATION_SCHEMA = {
     },
 }
 _MERCHANT_URL_SCHEMA = {"type": "string", "description": "Merchant root or UCP REST base URL."}
+_PLATFORM_PAGINATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "minimum": 1},
+        "offset": {"type": "integer", "minimum": 0},
+    },
+}
+_DISCOVER_FILTERS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "categories": {"type": "array", "items": {"type": "string"}},
+    },
+}
+_PURCHASE_HISTORY_FILTERS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "merchant_url": _MERCHANT_URL_SCHEMA,
+        "status": {"type": "string"},
+        "created_from": {"type": "string", "description": "ISO 8601 timestamp (inclusive lower bound)."},
+        "created_to": {"type": "string", "description": "ISO 8601 timestamp (inclusive upper bound)."},
+    },
+}
 
 
 def _tool_defs() -> list[dict[str, Any]]:
@@ -118,6 +144,21 @@ def _tool_defs() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {},
+            },
+        },
+        {
+            "name": "discover_commerces",
+            "description": (
+                "Discover registered platform merchants. Without a query, returns a feed of active "
+                "merchants ordered by recency. With a query, searches name, description, and category."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "filters": _DISCOVER_FILTERS_SCHEMA,
+                    "pagination": _PLATFORM_PAGINATION_SCHEMA,
+                },
             },
         },
         {
@@ -219,6 +260,20 @@ def _tool_defs() -> list[dict[str, Any]]:
                 "required": ["merchant_url", "id"],
             },
         },
+        {
+            "name": "get_purchase_history",
+            "description": (
+                "List the signed-in client's purchase history from the platform, with optional filters "
+                "by merchant, order status, and date range."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filters": _PURCHASE_HISTORY_FILTERS_SCHEMA,
+                    "pagination": _PLATFORM_PAGINATION_SCHEMA,
+                },
+            },
+        },
     ]
 
 
@@ -256,6 +311,13 @@ def _catalog_payload(args: dict[str, Any]) -> dict[str, Any]:
     if args.get("pagination") is not None:
         payload["pagination"] = args["pagination"]
     return payload
+
+
+def _platform_pagination(args: dict[str, Any]) -> tuple[int, int]:
+    pagination = args.get("pagination") or {}
+    limit = int(pagination.get("limit") or 20)
+    offset = int(pagination.get("offset") or 0)
+    return limit, offset
 
 
 def _first_row(result: Any) -> dict[str, Any] | None:
@@ -327,6 +389,68 @@ class McpGateway:
                 operation=tool_name,
                 transport="mcp",
                 status="success",
+                profile_id=profile_id,
+                api_key_id=self._context.api_key_id,
+            )
+            return payload
+
+        if tool_name == "discover_commerces":
+            filters = args.get("filters") or {}
+            limit, offset = _platform_pagination(args)
+            payload = await discover_commerces(
+                self._supabase,
+                query=args.get("query"),
+                categories=filters.get("categories"),
+                limit=limit,
+                offset=offset,
+            )
+            await record_usage_event(
+                self._supabase,
+                operation=tool_name,
+                transport="mcp",
+                status="success",
+                profile_id=profile_id,
+                api_key_id=self._context.api_key_id,
+            )
+            return payload
+
+        if tool_name == "get_purchase_history":
+            if not self._context.profile_id:
+                raise ValueError("Purchase history is only available for client MCP API keys")
+            filters = args.get("filters") or {}
+            limit, offset = _platform_pagination(args)
+            business_id: str | None = None
+            merchant_url = filters.get("merchant_url")
+            if merchant_url:
+                try:
+                    resolved = await resolve_merchant(self._supabase, str(merchant_url))
+                    business_id = resolved.business_id
+                except MerchantResolutionError as exc:
+                    await record_usage_event(
+                        self._supabase,
+                        operation=tool_name,
+                        transport="mcp",
+                        status="error",
+                        profile_id=profile_id,
+                        api_key_id=self._context.api_key_id,
+                    )
+                    return _ucp_business_error(type(exc).__name__, exc.message)
+            payload = await get_purchase_history(
+                self._supabase,
+                profile_id=profile_id,
+                business_id=business_id,
+                status=filters.get("status"),
+                created_from=filters.get("created_from"),
+                created_to=filters.get("created_to"),
+                limit=limit,
+                offset=offset,
+            )
+            await record_usage_event(
+                self._supabase,
+                operation=tool_name,
+                transport="mcp",
+                status="success",
+                business_id=business_id,
                 profile_id=profile_id,
                 api_key_id=self._context.api_key_id,
             )

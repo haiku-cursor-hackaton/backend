@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth.api_keys import ApiKeyContext
-from app.auth.scopes import CATALOG_READ, CHECKOUT_WRITE, PURCHASE_EXECUTE, WALLET_READ
+from app.auth.scopes import CATALOG_READ, CHECKOUT_WRITE, ORDER_READ, PURCHASE_EXECUTE, WALLET_READ
 from app.config import Settings, get_settings
 from app.dependencies import get_current_mcp_context, get_supabase_client
 from app.main import app
@@ -20,6 +20,52 @@ class FakeSupabase:
     def __init__(self) -> None:
         self.usage_events: list[dict[str, Any]] = []
         self.checkouts: list[dict[str, Any]] = []
+        self.businesses_feed: list[dict[str, Any]] = [
+            {
+                "id": "biz-feed-1",
+                "name": "Demo Store",
+                "category": "apparel",
+                "description": "Demo apparel shop",
+                "well_known_url": "https://shop.example.com/.well-known/ucp",
+                "status": "active",
+                "created_at": "2026-07-04T12:00:00Z",
+            },
+            {
+                "id": "biz-feed-2",
+                "name": "Tech Gadgets",
+                "category": "electronics",
+                "description": "Electronics and gadgets",
+                "well_known_url": "https://gadgets.example.com/.well-known/ucp",
+                "status": "active",
+                "created_at": "2026-07-03T12:00:00Z",
+            },
+        ]
+        self.orders: list[dict[str, Any]] = [
+            {
+                "id": "order-local-1",
+                "profile_id": "profile-1",
+                "business_id": "biz-1",
+                "external_order_id": "ord-100",
+                "status": "completed",
+                "total_minor": 1599,
+                "currency": "USD",
+                "permalink_url": "https://shop.example.com/orders/ord-100",
+                "created_at": "2026-07-04T10:00:00Z",
+                "businesses": {"name": "Demo Store", "category": "apparel"},
+            },
+            {
+                "id": "order-local-2",
+                "profile_id": "profile-2",
+                "business_id": "biz-1",
+                "external_order_id": "ord-200",
+                "status": "completed",
+                "total_minor": 3999,
+                "currency": "USD",
+                "permalink_url": None,
+                "created_at": "2026-07-04T11:00:00Z",
+                "businesses": {"name": "Demo Store", "category": "apparel"},
+            },
+        ]
 
     async def rpc(self, name: str, payload: dict | None = None) -> Any:
         if name == "resolve_business_by_domain":
@@ -37,9 +83,24 @@ class FakeSupabase:
         return {}
 
     async def select(self, table: str, *, query: dict[str, str] | None = None) -> Any:
+        query = query or {}
         if table == "checkout_sessions":
             return self.checkouts[:1]
         if table == "businesses":
+            if query.get("status") == "eq.active":
+                rows = list(self.businesses_feed)
+                if query.get("or"):
+                    needle = query["or"].split("*")[1] if "*" in query["or"] else ""
+                    rows = [
+                        row
+                        for row in rows
+                        if needle.lower() in str(row.get("name", "")).lower()
+                        or needle.lower() in str(row.get("description", "")).lower()
+                        or needle.lower() in str(row.get("category", "")).lower()
+                    ]
+                limit = int(query.get("limit", "20"))
+                offset = int(query.get("offset", "0"))
+                return rows[offset : offset + limit]
             return [
                 {
                     "id": "biz-1",
@@ -54,6 +115,21 @@ class FakeSupabase:
                     "encrypted_ucp_api_key": None,
                 }
             ]
+        if table == "orders":
+            profile_filter = query.get("profile_id", "")
+            profile_id = profile_filter.removeprefix("eq.")
+            rows = [row for row in self.orders if row.get("profile_id") == profile_id]
+            business_filter = query.get("business_id")
+            if business_filter:
+                business_id = business_filter.removeprefix("eq.")
+                rows = [row for row in rows if row.get("business_id") == business_id]
+            status_filter = query.get("status")
+            if status_filter:
+                status = status_filter.removeprefix("eq.")
+                rows = [row for row in rows if row.get("status") == status]
+            limit = int(query.get("limit", "20"))
+            offset = int(query.get("offset", "0"))
+            return rows[offset : offset + limit]
         if table == "profiles":
             return [{"full_name": "Demo Client", "account_type": "client"}]
         if table == "wallets":
@@ -137,13 +213,14 @@ def test_mcp_initialize(mcp_client: TestClient) -> None:
     assert result["serverInfo"] == {"name": "genko", "version": "0.1.0"}
 
 
-def test_mcp_tools_list_returns_ten_public_tools(mcp_client: TestClient) -> None:
+def test_mcp_tools_list_returns_twelve_public_tools(mcp_client: TestClient) -> None:
     response = mcp_client.post("/mcp", json=_rpc("tools/list"), headers={"Authorization": f"Bearer {API_KEY}"})
     assert response.status_code == 200
     tools = response.json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
     assert names == {
         "get_user_profile",
+        "discover_commerces",
         "search_catalog",
         "lookup_catalog",
         "get_product",
@@ -153,6 +230,7 @@ def test_mcp_tools_list_returns_ten_public_tools(mcp_client: TestClient) -> None
         "complete_checkout",
         "cancel_checkout",
         "get_order",
+        "get_purchase_history",
     }
 
 
@@ -234,3 +312,75 @@ def test_mcp_missing_checkout_id_returns_32602_not_unknown_tool(mcp_client: Test
     error = response.json()["error"]
     assert error["code"] == -32602
     assert "Unknown tool" not in error["message"]
+
+
+def test_mcp_discover_commerces_feed(mcp_client: TestClient) -> None:
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc("tools/call", {"name": "discover_commerces", "arguments": {}}),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()["result"]["structuredContent"]
+    assert len(payload["commerces"]) == 2
+    assert payload["commerces"][0]["business_id"] == "biz-feed-1"
+    assert payload["commerces"][0]["merchant_url"] == "https://shop.example.com"
+    assert payload["pagination"]["has_next_page"] is False
+
+
+def test_mcp_discover_commerces_with_query(mcp_client: TestClient) -> None:
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call",
+            {"name": "discover_commerces", "arguments": {"query": "gadgets"}},
+        ),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()["result"]["structuredContent"]
+    assert len(payload["commerces"]) == 1
+    assert payload["commerces"][0]["name"] == "Tech Gadgets"
+
+
+def test_mcp_get_purchase_history_scoped_to_profile(mcp_client: TestClient) -> None:
+    app.dependency_overrides[get_current_mcp_context] = lambda: ApiKeyContext(
+        api_key_id="key-1",
+        profile_id="profile-1",
+        scopes=[ORDER_READ],
+        raw={"email": "buyer@example.com"},
+    )
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc("tools/call", {"name": "get_purchase_history", "arguments": {}}),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()["result"]["structuredContent"]
+    assert len(payload["orders"]) == 1
+    assert payload["orders"][0]["order_id"] == "ord-100"
+    assert payload["orders"][0]["merchant"]["name"] == "Demo Store"
+
+
+def test_mcp_get_purchase_history_with_merchant_filter(mcp_client: TestClient) -> None:
+    app.dependency_overrides[get_current_mcp_context] = lambda: ApiKeyContext(
+        api_key_id="key-1",
+        profile_id="profile-1",
+        scopes=[ORDER_READ],
+        raw={"email": "buyer@example.com"},
+    )
+    response = mcp_client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call",
+            {
+                "name": "get_purchase_history",
+                "arguments": {"filters": {"merchant_url": MERCHANT_URL, "status": "completed"}},
+            },
+        ),
+        headers={"Authorization": f"Bearer {API_KEY}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()["result"]["structuredContent"]
+    assert len(payload["orders"]) == 1
+    assert payload["orders"][0]["status"] == "completed"
