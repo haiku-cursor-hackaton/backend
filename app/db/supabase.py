@@ -84,3 +84,11 @@ class SupabaseClient:
             headers={"Prefer": "return=representation"},
         )
         return self._parse_response(response)
+
+    async def delete(self, table: str, *, query: dict[str, str]) -> Any:
+        response = await self._client.delete(
+            f"/{table}",
+            params=query,
+            headers={"Prefer": "return=representation"},
+        )
+        return self._parse_response(response)

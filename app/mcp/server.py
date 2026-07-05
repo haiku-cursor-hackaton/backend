@@ -18,7 +18,7 @@ from app.config import Settings, get_settings
 from app.db.supabase import SupabaseClient
 from app.dependencies import get_current_mcp_context, get_supabase_client
 from app.services.buyer import buyer_from_context, merge_buyer
-from app.services.checkout_store import find_checkout, upsert_checkout_from_ucp
+from app.services.checkout_store import extract_total_minor, find_checkout, upsert_checkout_from_ucp
 from app.services.commerce_discovery import discover_commerces
 from app.services.merchant_resolver import (
     CapabilityError,
@@ -35,6 +35,41 @@ from app.services.user_profile import get_user_profile
 from app.services.wallet_orchestrator import CompleteCheckoutOrchestrator
 
 JSONRPC_VERSION = "2.0"
+
+
+def _usage_event_fields_for_tool(
+    *,
+    tool_name: str,
+    payload: Any,
+    business_id: str | None,
+    profile_id: str,
+    api_key_id: str | None,
+    status: str,
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "operation": tool_name,
+        "transport": "mcp",
+        "status": status,
+        "business_id": business_id,
+        "profile_id": profile_id,
+        "api_key_id": api_key_id,
+    }
+    if tool_name != "complete_checkout" or status != "success":
+        return fields
+    if not isinstance(payload, dict):
+        return fields
+    ucp = payload.get("ucp")
+    if isinstance(ucp, dict) and ucp.get("status") == "error":
+        fields["status"] = "error"
+        return fields
+    total_minor, _currency = extract_total_minor(payload)
+    if total_minor > 0:
+        fields["is_purchase"] = True
+        fields["revenue_minor"] = total_minor
+    order = payload.get("order")
+    if isinstance(order, dict) and order.get("id"):
+        fields["order_id"] = str(order["id"])
+    return fields
 
 CAPABILITY_CATALOG_SEARCH = "dev.ucp.shopping.catalog.search"
 CAPABILITY_CATALOG_LOOKUP = "dev.ucp.shopping.catalog.lookup"
@@ -536,12 +571,14 @@ class McpGateway:
 
             await record_usage_event(
                 self._supabase,
-                operation=tool_name,
-                transport="mcp",
-                status="success",
-                business_id=merchant.business_id,
-                profile_id=profile_id,
-                api_key_id=self._context.api_key_id,
+                **_usage_event_fields_for_tool(
+                    tool_name=tool_name,
+                    payload=payload,
+                    business_id=merchant.business_id,
+                    profile_id=profile_id,
+                    api_key_id=self._context.api_key_id,
+                    status="success",
+                ),
             )
             return payload
         except (MerchantResolutionError, CapabilityError) as exc:

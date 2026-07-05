@@ -79,3 +79,18 @@ async def link_merchant(
         )
     except MerchantRegistrationError as exc:
         raise HTTPException(status_code=400, detail=exc.message) from exc
+
+
+@router.post("/{business_id}/unlink")
+async def unlink_merchant(
+    business_id: str,
+    user: Annotated[DashboardUser, Depends(get_current_dashboard_user)],
+    service: Annotated[MerchantRegistrationService, Depends(_get_registration_service)],
+) -> dict:
+    try:
+        return await service.unlink_url(
+            owner_id=user.id,
+            business_id=business_id,
+        )
+    except MerchantRegistrationError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc

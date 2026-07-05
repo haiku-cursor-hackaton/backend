@@ -203,6 +203,46 @@ class MerchantRegistrationService:
             "status": "active",
         }
 
+    async def unlink_url(
+        self,
+        *,
+        owner_id: str,
+        business_id: str,
+    ) -> dict[str, Any]:
+        business_row = _first_row(
+            await self._supabase.select(
+                "businesses",
+                query={
+                    "id": f"eq.{business_id}",
+                    "select": "id,owner_id",
+                    "limit": "1",
+                },
+            )
+        )
+        if business_row is None:
+            raise MerchantRegistrationError("Business not found")
+        if str(business_row.get("owner_id")) != owner_id:
+            raise MerchantRegistrationError("Business does not belong to caller")
+
+        await self._supabase.delete(
+            "merchant_domains",
+            query={"business_id": f"eq.{business_id}"},
+        )
+
+        await self._supabase.update(
+            "businesses",
+            {
+                "status": "pending",
+                "well_known_url": None,
+                "ucp_base_url": None,
+                "ucp_capabilities": {},
+                "encrypted_ucp_api_key": None,
+            },
+            query={"id": f"eq.{business_id}"},
+        )
+
+        return {"business_id": business_id, "status": "pending"}
+
     async def register(
         self,
         *,
